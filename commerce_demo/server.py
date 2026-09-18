@@ -63,7 +63,8 @@ def make_handler(mode="replay"):
                     result = {"busy": session["busy"], "error": session["error"], "bypass": session["bypass"], "mode": mode}
                     if deal:
                         result.update(authority().snapshot(deal["owner_token"]))
-                        result["offers"] = authority().offers(deal["owner_token"])["offers"]
+                        market = authority().offers(deal["owner_token"])
+                        result.update({key: value for key, value in market.items() if key != "deal_id"})
                 return self.reply(200, result)
             assets = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
             if self.path not in assets:
@@ -139,8 +140,9 @@ def make_handler(mode="replay"):
                 with lock:
                     session["deal"] = deal
                 state = authority().snapshot(session["deal"]["owner_token"])
-                if not any(event["kind"] == "OFFER_REGISTERED" for event in state["events"]):
-                    raise CommerceError("The networks did not register any offers. Check live model configuration or use replay mode.")
+                if not any(event["kind"] in ("BARGAINING_RESOLVED", "NO_AGREEMENT")
+                           for event in state["events"]):
+                    raise CommerceError("The networks did not resolve bargaining. Check live model configuration or use replay mode.")
             except Exception as error:
                 with lock:
                     session["error"] = f"{type(error).__name__}: {error}"

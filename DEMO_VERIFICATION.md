@@ -7,24 +7,26 @@ and locked dependencies (`neuro-san-studio` 0.3.20, `neuro-san` 0.6.95).
   strings and every original tool connection. Both replay and live configurations
   pass the comparison against retained source snapshots.
 - The CLI executes actual Neuro-SAN graphs with scripted model decisions: three
-  direct provider exchanges, then two mediated rounds across all three providers.
+  direct provider exchanges, then one sealed coded bid from each provider.
 - The travel specialist creates the mandate through `TravelMandateAuthority`
   before delegating. It has no direct provider edge; code constrains its proposal
   to the trusted trip and maximum ceiling, and no bearer capability enters SlyData.
 - The retail specialist likewise creates a code-bounded mandate without a Macy's
   or CarMax edge. `product_researcher` and `price_comparison_agent` both use
-  `CommerceArbiter`; four direct informational calls and four arbiter-routed calls
+  `CommerceArbiter`; four direct informational calls and two arbiter-routed calls
   execute across the two copied provider networks without disclosing the budget.
 - Retail fixture prices are Macy's $450 and CarMax $25,000 informationally, with
-  canonical coded offers of $390 and $23,500 after two arbiter rounds.
+  equal-weight Nash compromises of $420 and $24,250.
 - Direct prices: Airbnb $1,120; Expedia $1,080; Booking.com $1,050. All include the
   fixed informational/non-negotiable caveat.
-- Final coded offers: Airbnb $960; Expedia $925; Booking.com $910. The $1,000
+- Final coded offers: Airbnb $980; Expedia $962.50; Booking.com $955. The $1,000
   mandate remains absent from every outgoing provider request.
-- A CLI run with `--settle` produced one $910 simulated settlement and a receipt.
+- A CLI run with `--settle` produced one $955 simulated settlement and a receipt.
 - Browser walkthrough: agent creates mandate → see three offers → try bypass → fixed
   Airbnb price unchanged → $0.01 override denied → agent settlement denied →
-  consumer selects Booking.com → funds held → confirm → $910 receipt displayed.
+  consumer selects Booking.com → funds held → confirm → $955 receipt displayed.
+- A $900 mandate produces a recorded `NO_AGREEMENT`; no offer is created and the
+  audit exposes neither the buyer ceiling nor seller floors.
 - All 34 automated tests cover bare-nsFlow travel and retail mandate creation,
   immutable pricing, scoped identities, direct-route
   restrictions, private-budget isolation, unauthorized purchase attempts,

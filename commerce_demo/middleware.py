@@ -106,7 +106,7 @@ class CommerceBoundary(AgentMiddleware):
         if row:
             import json
             return json.loads(row["body"])
-        return {"provider": self.network, "status": "NO_OFFER", "message": "Provider has not submitted a quote through its coded tool."}
+        return service.bid_receipt(context["deal_id"], self.network)
 
     def replay(self, request, context):
         """Explicit scripted model substitute; real Neuro-SAN agents/tools still execute."""

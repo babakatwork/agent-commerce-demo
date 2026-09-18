@@ -23,16 +23,18 @@ class NetworkIntegrationTests(unittest.TestCase):
             configure(service)
             setup("replay")
             result, deal = run_consumer(default_trip(), 100000)
-            self.assertEqual([o["total_cents"] for o in result["offers"]], [91000, 92500, 96000])
+            self.assertEqual([o["total_cents"] for o in result["offers"]], [95500, 96250, 98000])
             snapshot = service.snapshot(deal["owner_token"])
             events = snapshot["events"]
             mandate = next(e for e in events if e["kind"] == "MANDATE_CREATED")
             self.assertEqual(mandate["payload"]["created_by"], "travel_decision_specialist")
             requests = [e for e in events if e["kind"] == "A2A_REQUEST"]
-            self.assertEqual(len(requests), 9)
+            self.assertEqual(len(requests), 6)
             self.assertEqual(sum(e["payload"]["route"] == "direct" for e in requests), 3)
             self.assertTrue(all("budget" not in str(e["payload"]["message"]) for e in requests))
-            self.assertEqual(sum(e["kind"] == "OFFER_REGISTERED" for e in events), 6)
+            self.assertEqual(sum(e["kind"] == "BID_COMMITTED" for e in events), 3)
+            self.assertEqual(sum(e["kind"] == "OFFER_REGISTERED" for e in events), 3)
+            self.assertEqual(sum(e["kind"] == "BARGAINING_RESOLVED" for e in events), 1)
             direct = [e["payload"]["message"] for e in events if e["kind"] == "A2A_RESPONSE" and e["payload"]["route"] == "direct"]
             self.assertEqual([d["total_cents"] for d in direct], [112000, 108000, 105000])
             self.assertTrue(all(d["caveat"] == CAVEAT for d in direct))
@@ -40,7 +42,7 @@ class NetworkIntegrationTests(unittest.TestCase):
             service.authorize(deal["owner_token"], result["offers"][0]["offer_id"])
             receipt = service.confirm(deal["owner_token"])
             self.assertEqual(receipt["state"], "SETTLED")
-            self.assertEqual(receipt["paid_cents"], 91000)
+            self.assertEqual(receipt["paid_cents"], 95500)
 
     def test_bare_nsflow_style_call_needs_no_precreated_mandate(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -52,7 +54,7 @@ class NetworkIntegrationTests(unittest.TestCase):
                 "Book a Santa Cruz weekend within a $1000 maximum; negotiate but do not settle.",
                 {},
             ))
-            self.assertEqual([o["total_cents"] for o in result["offers"]], [91000, 92500, 96000])
+            self.assertEqual([o["total_cents"] for o in result["offers"]], [95500, 96250, 98000])
             with service.db() as db:
                 event = db.execute(
                     "SELECT payload FROM events WHERE kind='MANDATE_CREATED' ORDER BY seq DESC LIMIT 1"
@@ -66,13 +68,13 @@ class NetworkIntegrationTests(unittest.TestCase):
             setup("replay")
             result, deal = run_retail()
             self.assertEqual([offer["provider"] for offer in result["offers"]], ["macys", "carmax"])
-            self.assertEqual([offer["total_cents"] for offer in result["offers"]], [39000, 2350000])
+            self.assertEqual([offer["total_cents"] for offer in result["offers"]], [42000, 2425000])
             snapshot = service.snapshot(deal["owner_token"])
             self.assertEqual(snapshot["kind"], "retail")
             mandate = next(event for event in snapshot["events"] if event["kind"] == "MANDATE_CREATED")
             self.assertEqual(mandate["payload"]["created_by"], "retail_decision_specialist")
             requests = [event["payload"] for event in snapshot["events"] if event["kind"] == "A2A_REQUEST"]
-            self.assertEqual(len(requests), 8)
+            self.assertEqual(len(requests), 6)
             self.assertEqual(sum(request["route"] == "direct" for request in requests), 4)
             self.assertTrue(all("budget" not in json.dumps(request["message"]) for request in requests))
             tool_agents = {event["payload"]["agent"] for event in snapshot["events"]
@@ -90,6 +92,7 @@ class NetworkIntegrationTests(unittest.TestCase):
                 {},
             ))
             self.assertEqual([offer["provider"] for offer in result["offers"]], ["macys", "carmax"])
+            self.assertEqual([offer["total_cents"] for offer in result["offers"]], [42000, 2425000])
 
 
 if __name__ == "__main__":

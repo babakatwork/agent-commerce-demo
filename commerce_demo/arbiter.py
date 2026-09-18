@@ -18,6 +18,9 @@ from .catalog import (
     validate_retail_purchase, validate_trip,
 )
 
+MECHANISM_NAME = "weighted_nash_bargaining"
+MECHANISM_VERSION = "1.0"
+
 
 class CommerceError(ValueError):
     pass
@@ -47,6 +50,11 @@ class Arbiter:
                     id TEXT PRIMARY KEY, deal TEXT NOT NULL, provider TEXT NOT NULL,
                     round INTEGER NOT NULL, amount INTEGER NOT NULL, body TEXT NOT NULL,
                     expires REAL NOT NULL, UNIQUE(deal, provider, round));
+                CREATE TABLE IF NOT EXISTS bids (
+                    deal TEXT NOT NULL, provider TEXT NOT NULL, ask INTEGER NOT NULL,
+                    floor INTEGER NOT NULL, salt TEXT NOT NULL, commitment TEXT NOT NULL,
+                    submitted REAL NOT NULL,
+                    PRIMARY KEY(deal, provider));
                 CREATE TABLE IF NOT EXISTS events (
                     seq INTEGER PRIMARY KEY AUTOINCREMENT, deal TEXT NOT NULL,
                     kind TEXT NOT NULL, payload TEXT NOT NULL, at REAL NOT NULL);
@@ -57,6 +65,9 @@ class Arbiter:
             columns = {row[1] for row in db.execute("PRAGMA table_info(deals)")}
             if "kind" not in columns:
                 db.execute("ALTER TABLE deals ADD COLUMN kind TEXT NOT NULL DEFAULT 'travel'")
+            bid_columns = {row[1] for row in db.execute("PRAGMA table_info(bids)")}
+            if "salt" not in bid_columns:
+                db.execute("ALTER TABLE bids ADD COLUMN salt TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def db(self):
@@ -128,7 +139,7 @@ class Arbiter:
             return result
 
     def provider_capability(self, buyer_token, provider, round_no=0):
-        if provider not in CONNECTED or type(round_no) is not int or round_no not in (0, 1, 2):
+        if provider not in CONNECTED or type(round_no) is not int or round_no not in (0, 1):
             raise CommerceError("Invalid provider or negotiation round.")
         with self.db() as db:
             cap = self._auth(db, buyer_token, "buyer")
@@ -137,10 +148,6 @@ class Arbiter:
                 raise CommerceError("Provider is outside this mandate's transaction scope.")
             if round_no and deal["state"] not in ("OPEN", "NEGOTIATING"):
                 raise CommerceError("This deal is no longer open for negotiation.")
-            if round_no == 2 and db.execute(
-                "SELECT 1 FROM offers WHERE deal=? AND provider=? AND round=1", (cap["deal"], provider)
-            ).fetchone() is None:
-                raise CommerceError("Round one is required before round two.")
             token = self._mint(db, cap["deal"], provider, "direct" if not round_no else "arbiter", round_no)
             if round_no:
                 db.execute("UPDATE deals SET state='NEGOTIATING' WHERE id=?", (cap["deal"],))
@@ -152,10 +159,11 @@ class Arbiter:
         request = {subject_key: context[subject_key], "route": context["route"],
                    "scope": SCOPE if context["kind"] == "travel" else RETAIL_SCOPE}
         if context["route"] == "arbiter":
-            request.update({"round": context["round"], "request": "Submit the deterministic provider quote through CommerceArbiter."})
-            if context["round"] == 2:
-                # Public-list-price-based counter, independent of the buyer's private budget.
-                request["target_cents"] = CATALOG[principal]["list_cents"] * 85 // 100
+            request.update({
+                "round": context["round"],
+                "request": "Commit the sealed provider bid through CommerceArbiter. Do not return a price in model prose.",
+                "mechanism": {"name": MECHANISM_NAME, "version": MECHANISM_VERSION},
+            })
         else:
             request["request"] = "Discuss the package and provide the fixed informational catalogue price."
         return request
@@ -173,47 +181,126 @@ class Arbiter:
         subject_key = "trip" if context["kind"] == "travel" else "purchase"
         return public_catalog(provider, context[subject_key], context["kind"])
 
-    def quote(self, token, provider):
+    def submit_bid(self, token, provider):
+        """Commit a policy-generated sealed bid; model arguments never contain prices."""
         with self.db() as db:
             cap = self._auth(db, token, provider)
             deal = self._deal(db, cap["deal"])
-            if provider not in providers_for(deal["kind"]) or cap["route"] != "arbiter" or cap["round"] not in (1, 2):
-                raise CommerceError("Direct conversations cannot negotiate or issue binding offers. Use the arbiter.")
+            if (provider not in providers_for(deal["kind"]) or
+                    cap["route"] != "arbiter" or cap["round"] != 1):
+                raise CommerceError("Direct conversations cannot bid or issue binding offers. Use the arbiter.")
             if deal["state"] not in ("OPEN", "NEGOTIATING"):
                 raise CommerceError("This deal is no longer negotiating.")
-            previous = db.execute("SELECT body FROM offers WHERE deal=? AND provider=? AND round=?",
-                                  (cap["deal"], provider, cap["round"])).fetchone()
+            previous = db.execute(
+                "SELECT commitment FROM bids WHERE deal=? AND provider=?", (cap["deal"], provider)
+            ).fetchone()
             if previous:
-                return json.loads(previous["body"])
+                return {"status": "BID_COMMITTED", "provider": provider,
+                        "commitment": previous["commitment"], "sealed": True,
+                        "mechanism": {"name": MECHANISM_NAME, "version": MECHANISM_VERSION}}
             item = CATALOG[provider]
-            amount = item["round_one_cents"] if cap["round"] == 1 else max(
-                item["floor_cents"], item["list_cents"] * 85 // 100)
-            offer_id = secrets.token_hex(16)
-            expires = self.clock() + 900
-            if deal["kind"] == "travel":
-                line_items = [
-                    {"label": "Two nights, parking and Wi-Fi", "cents": item["lodging_cents"]},
-                    {"label": "Taxes and fees", "cents": item["fees_cents"]},
-                    {"label": "Local activity for two", "cents": item["activity_cents"]},
-                ]
-            else:
-                line_items = [{"label": item["title"], "cents": item["list_cents"]}]
-            line_items.append({"label": "Arbiter-negotiated discount", "cents": amount - item["list_cents"]})
-            body = {
-                "offer_id": offer_id, "provider": provider, "item_id": item["item_id"],
-                "title": item["title"], "round": cap["round"], "currency": "USD",
-                "total_cents": amount, "list_cents": item["list_cents"],
-                "savings_cents": item["list_cents"] - amount,
-                "line_items": line_items,
-                "trip" if deal["kind"] == "travel" else "purchase": json.loads(deal["trip"]),
-                "scope": SCOPE if deal["kind"] == "travel" else RETAIL_SCOPE,
-                "cancellation": item["cancellation"], "expires_at": expires,
-                "simulation": True, "status": "OFFER_ONLY",
-            }
-            db.execute("INSERT INTO offers VALUES(?,?,?,?,?,?,?)",
-                       (offer_id, cap["deal"], provider, cap["round"], amount, encode(body), expires))
-            self._event(db, cap["deal"], "OFFER_REGISTERED", body)
-            return body
+            salt = secrets.token_hex(32)
+            sealed = {"deal": cap["deal"], "provider": provider,
+                      "ask": item["list_cents"], "floor": item["floor_cents"],
+                      "mechanism_version": MECHANISM_VERSION, "salt": salt}
+            commitment = hashlib.sha256(encode(sealed).encode()).hexdigest()
+            db.execute("""INSERT INTO bids(
+                deal,provider,ask,floor,salt,commitment,submitted) VALUES(?,?,?,?,?,?,?)""", (
+                cap["deal"], provider, item["list_cents"], item["floor_cents"],
+                salt, commitment, self.clock()))
+            receipt = {"status": "BID_COMMITTED", "provider": provider,
+                       "commitment": commitment, "sealed": True,
+                       "mechanism": {"name": MECHANISM_NAME, "version": MECHANISM_VERSION}}
+            self._event(db, cap["deal"], "BID_COMMITTED", receipt)
+            return receipt
+
+    def quote(self, token, provider):
+        """Compatibility name used by provider CodedTools."""
+        return self.submit_bid(token, provider)
+
+    def bid_receipt(self, deal_id, provider):
+        with self.db() as db:
+            row = db.execute(
+                "SELECT commitment FROM bids WHERE deal=? AND provider=?", (deal_id, provider)
+            ).fetchone()
+        if row:
+            return {"status": "BID_COMMITTED", "provider": provider,
+                    "commitment": row["commitment"], "sealed": True,
+                    "mechanism": {"name": MECHANISM_NAME, "version": MECHANISM_VERSION}}
+        return {"provider": provider, "status": "NO_BID",
+                "message": "Provider has not committed a coded bid."}
+
+    def _offer_body(self, deal, provider, amount, commitment, expires):
+        item = CATALOG[provider]
+        if deal["kind"] == "travel":
+            line_items = [
+                {"label": "Two nights, parking and Wi-Fi", "cents": item["lodging_cents"]},
+                {"label": "Taxes and fees", "cents": item["fees_cents"]},
+                {"label": "Local activity for two", "cents": item["activity_cents"]},
+            ]
+        else:
+            line_items = [{"label": item["title"], "cents": item["list_cents"]}]
+        line_items.append({"label": "Nash bargaining adjustment", "cents": amount - item["list_cents"]})
+        body = {
+            "offer_id": secrets.token_hex(16), "provider": provider, "item_id": item["item_id"],
+            "title": item["title"], "round": 1, "currency": "USD",
+            "total_cents": amount, "list_cents": item["list_cents"],
+            "savings_cents": item["list_cents"] - amount, "line_items": line_items,
+            "trip" if deal["kind"] == "travel" else "purchase": json.loads(deal["trip"]),
+            "scope": SCOPE if deal["kind"] == "travel" else RETAIL_SCOPE,
+            "cancellation": item["cancellation"], "expires_at": expires,
+            "mechanism": {"name": MECHANISM_NAME, "version": MECHANISM_VERSION,
+                          "buyer_weight": "1/2", "seller_weight": "1/2",
+                          "bid_commitment": commitment},
+            "simulation": True, "status": "OFFER_ONLY",
+        }
+        return body
+
+    def resolve(self, buyer_token):
+        """Apply equal-weight Nash bargaining to sealed policy bids."""
+        with self.db() as db:
+            cap = self._auth(db, buyer_token, "buyer")
+            deal = self._deal(db, cap["deal"])
+            existing = db.execute("SELECT 1 FROM offers WHERE deal=?", (cap["deal"],)).fetchone()
+            if existing is None and deal["state"] != "NO_AGREEMENT":
+                bids = db.execute(
+                    "SELECT * FROM bids WHERE deal=? ORDER BY provider", (cap["deal"],)
+                ).fetchall()
+                candidates = []
+                rejected = []
+                for bid in bids:
+                    upper = min(deal["budget"], bid["ask"])
+                    if bid["floor"] > upper:
+                        rejected.append(bid["provider"])
+                        continue
+                    # Equal-weight Nash bargaining with linear utilities maximizes
+                    # (upper - price) * (price - floor), yielding the midpoint.
+                    amount = (upper + bid["floor"]) // 2
+                    candidates.append((bid, amount))
+                if not candidates:
+                    db.execute("UPDATE deals SET state='NO_AGREEMENT' WHERE id=?", (cap["deal"],))
+                    self._event(db, cap["deal"], "NO_AGREEMENT", {
+                        "mechanism": {"name": MECHANISM_NAME, "version": MECHANISM_VERSION},
+                        "received_bids": [bid["provider"] for bid in bids],
+                        "reason": "No sealed bid overlaps the private mandate.",
+                    })
+                else:
+                    expires = self.clock() + 900
+                    for bid, amount in candidates:
+                        body = self._offer_body(deal, bid["provider"], amount,
+                                                bid["commitment"], expires)
+                        db.execute("INSERT INTO offers VALUES(?,?,?,?,?,?,?)", (
+                            body["offer_id"], cap["deal"], bid["provider"], 1,
+                            amount, encode(body), expires))
+                        self._event(db, cap["deal"], "OFFER_REGISTERED", body)
+                    db.execute("UPDATE deals SET state='NEGOTIATING' WHERE id=?", (cap["deal"],))
+                    self._event(db, cap["deal"], "BARGAINING_RESOLVED", {
+                        "mechanism": {"name": MECHANISM_NAME, "version": MECHANISM_VERSION,
+                                      "buyer_weight": "1/2", "seller_weight": "1/2"},
+                        "agreements": [bid["provider"] for bid, _ in candidates],
+                        "no_agreement": rejected,
+                    })
+        return self.offers(buyer_token)
 
     def offers(self, buyer_token):
         with self.db() as db:
@@ -227,9 +314,15 @@ class Arbiter:
                 ORDER BY amount,provider""", (cap["deal"],)).fetchall()
             offers = [json.loads(row["body"]) for row in rows
                       if row["amount"] <= deal["budget"] and row["expires"] > self.clock()]
-            return {"state": deal["state"], "offers": offers, "simulation": True,
+            resolution = "AGREEMENT" if offers else (
+                "NO_AGREEMENT" if deal["state"] == "NO_AGREEMENT" else "PENDING")
+            return {"state": deal["state"], "resolution": resolution,
+                    "mechanism": {"name": MECHANISM_NAME, "version": MECHANISM_VERSION},
+                    "offers": offers, "simulation": True,
                     "message": "Select one offer to authorize simulated settlement." if offers
-                    else "No unexpired offer meets the private budget. Nothing has been booked."}
+                    else ("No sealed bid overlaps the private mandate. Nothing has been booked."
+                          if resolution == "NO_AGREEMENT" else
+                          "No unexpired offer meets the private mandate. Nothing has been booked.")}
 
     def _expire_hold(self, db, deal):
         if deal["state"] == "HELD" and deal["hold_until"] <= self.clock():

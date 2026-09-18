@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from .arbiter import Arbiter
-from .catalog import default_trip
+from .catalog import default_trip, providers_for
 from .runtime import ROOT, configure
 
 
@@ -41,9 +41,13 @@ def main():
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(snapshot, indent=2) + "\n")
         print(f"Audit: {output}")
-        expected = 9  # Three direct conversations, then two mediated rounds with three providers.
+        provider_count = len(providers_for("travel"))
+        expected = provider_count * 2  # One direct discovery call and one sealed-bid call per provider.
         requests = [event for event in snapshot["events"] if event["kind"] == "A2A_REQUEST"]
-        if len(requests) < expected or len([event for event in snapshot["events"] if event["kind"] == "OFFER_REGISTERED"]) != 6:
+        bids = [event for event in snapshot["events"] if event["kind"] == "BID_COMMITTED"]
+        resolutions = [event for event in snapshot["events"]
+                       if event["kind"] in ("BARGAINING_RESOLVED", "NO_AGREEMENT")]
+        if len(requests) < expected or len(bids) != provider_count or len(resolutions) != 1:
             raise RuntimeError("Incomplete market execution; inspect the audit and provider errors.")
 
 

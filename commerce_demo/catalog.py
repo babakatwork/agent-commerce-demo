@@ -15,30 +15,30 @@ SCOPE = "Two nights for two adults, parking, Wi-Fi and one local activity. Meals
 CATALOG = {
     "airbnb": {
         "item_id": "sc-coastal-cottage", "title": "Coastal cottage + kayak outing",
-        "list_cents": 112000, "round_one_cents": 104000, "floor_cents": 96000,
+        "list_cents": 112000, "floor_cents": 96000,
         "lodging_cents": 82000, "fees_cents": 18000, "activity_cents": 12000,
         "cancellation": "Full refund until 72 hours before arrival.",
     },
     "expedia": {
         "item_id": "sc-harbor-weekend", "title": "Harbor hotel + coastal bike tour",
-        "list_cents": 108000, "round_one_cents": 100000, "floor_cents": 92500,
+        "list_cents": 108000, "floor_cents": 92500,
         "lodging_cents": 80000, "fees_cents": 16000, "activity_cents": 12000,
         "cancellation": "Full refund until 48 hours before arrival.",
     },
     "booking": {
         "item_id": "sc-boardwalk-break", "title": "Boardwalk hotel + aquarium visit",
-        "list_cents": 105000, "round_one_cents": 98000, "floor_cents": 91000,
+        "list_cents": 105000, "floor_cents": 91000,
         "lodging_cents": 79000, "fees_cents": 16000, "activity_cents": 10000,
         "cancellation": "Full refund until 24 hours before arrival.",
     },
     "macys": {
         "item_id": "macys-weekender-set", "title": "Illustrative Macy's weekender luggage set",
-        "list_cents": 45000, "round_one_cents": 42500, "floor_cents": 39000,
+        "list_cents": 45000, "floor_cents": 39000,
         "cancellation": "Simulated return permitted within 30 days.",
     },
     "carmax": {
         "item_id": "carmax-corolla-demo", "title": "Illustrative CarMax pre-owned compact car",
-        "list_cents": 2500000, "round_one_cents": 2425000, "floor_cents": 2350000,
+        "list_cents": 2500000, "floor_cents": 2350000,
         "cancellation": "Simulated offer subject to vehicle inspection and availability.",
     },
 }

@@ -89,7 +89,8 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
             return ModelResponse(result=[AIMessage(content='{"offer_id":"made-up","total_cents":1}')])
         with patch.dict(os.environ, {"COMMERCE_MODE": "live"}):
             response = await boundary.awrap_model_call(SimpleNamespace(), disobedient_model)
-        self.assertEqual(json.loads(response.result[-1].content)["status"], "NO_OFFER")
+        self.assertEqual(json.loads(response.result[-1].content)["status"], "NO_BID")
+        self.assertNotIn("total_cents", response.result[-1].content)
 
 
 if __name__ == "__main__":

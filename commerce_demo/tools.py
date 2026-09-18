@@ -88,24 +88,24 @@ class CommerceArbiter(CodedTool):
                     return service.offers(token)
                 if operation != "negotiate":
                     raise CommerceError("Buyer agents may negotiate through code or read offers; they cannot authorize or settle.")
-                # Fixed protocol, both rounds, providers selected by the coded mandate.
+                # Providers commit sealed policy bids. The arbiter alone reads
+                # private values and applies the deterministic bargaining rule.
                 from .runner import provider_call
                 failures = []
-                for round_no in (1, 2):
-                    for provider in providers_for(context["kind"]):
-                        try:
-                            seller_token = service.provider_capability(token, provider, round_no)
-                            await asyncio.to_thread(provider_call, provider, seller_token, "CommerceArbiter")
-                        except Exception as error:
-                            # A partial market remains useful; never substitute invented offers.
-                            failures.append({"provider": provider, "round": round_no, "error": type(error).__name__})
-                result = service.offers(token)
+                for provider in providers_for(context["kind"]):
+                    try:
+                        seller_token = service.provider_capability(token, provider, 1)
+                        await asyncio.to_thread(provider_call, provider, seller_token, "CommerceArbiter")
+                    except Exception as error:
+                        # A partial market remains useful; never substitute invented bids.
+                        failures.append({"provider": provider, "error": type(error).__name__})
+                result = service.resolve(token)
                 result["unavailable"] = failures
                 return result
             if operation == "catalog":
                 return service.informational(token, self.principal)
             if operation == "quote":
-                return service.quote(token, self.principal)
+                return service.submit_bid(token, self.principal)
             raise CommerceError("Provider agents cannot accept, charge, settle, or modify a price.")
         except CommerceError as error:
             return {"error": str(error), "status": "DENIED", "simulation": True}

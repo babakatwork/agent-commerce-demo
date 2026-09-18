@@ -7,3 +7,4 @@ logs/
 dist/
 build/
 nss_local.db
+.DS_Store

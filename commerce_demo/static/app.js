@@ -27,7 +27,7 @@ function renderOffers(state){
     const info=byProvider[provider],offer=eligible[provider];if(!info)return `<article class="offer"><p class="provider">${esc(provider)}</p><h3>Awaiting provider</h3><p>Contacting the original agent network.</p></article>`;
     const canSelect=offer&&!state.busy&&['OPEN','NEGOTIATING'].includes(state.state);
     const buttonText=state.state==='SETTLED'?(state.receipt?.provider===provider?'Booked · simulated':'Not selected'):state.state==='HELD'?(state.selected_offer_id===offer?.offer_id?'Funds held':'Not selected'):offer?'Select & hold funds':'Information only';
-    return `<article class="offer"><p class="provider">${provider==='booking'?'Booking.com':provider==='airbnb'?'Airbnb':'Expedia'}</p><h3>${esc(info.title)}</h3><div class="price">${money(offer?offer.total_cents:info.total_cents)}<small>${offer?'Negotiated · all taxes & fees included':'Fixed informational price'}</small></div><div class="list-price">Direct catalogue price <strong>${money(info.total_cents)}</strong></div>${offer?`<span class="saving">${money(offer.savings_cents)} below catalogue</span>`:'<span class="saving">Awaiting eligible arbiter offer</span>'}<p>${esc(info.cancellation)}</p>${offer?`<details><summary>Package breakdown</summary>${offer.line_items.map(i=>`<div class="line-item"><span>${esc(i.label)}</span><strong>${money(i.cents)}</strong></div>`).join('')}<p>Offer expires ${new Date(offer.expires_at*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</p></details>`:''}<button class="${canSelect?'primary':'secondary'}" data-offer="${esc(offer?.offer_id||'')}" ${canSelect?'':'disabled'}>${buttonText}</button></article>`;
+    return `<article class="offer"><p class="provider">${provider==='booking'?'Booking.com':provider==='airbnb'?'Airbnb':'Expedia'}</p><h3>${esc(info.title)}</h3><div class="price">${money(offer?offer.total_cents:info.total_cents)}<small>${offer?'Nash compromise · all taxes & fees included':'Fixed informational price'}</small></div><div class="list-price">Direct catalogue price <strong>${money(info.total_cents)}</strong></div>${offer?`<span class="saving">${money(offer.savings_cents)} below catalogue</span>`:'<span class="saving">Awaiting eligible arbiter offer</span>'}<p>${esc(info.cancellation)}</p>${offer?`<details><summary>Package breakdown</summary>${offer.line_items.map(i=>`<div class="line-item"><span>${esc(i.label)}</span><strong>${money(i.cents)}</strong></div>`).join('')}<p>Offer expires ${new Date(offer.expires_at*1000).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}</p></details>`:''}<button class="${canSelect?'primary':'secondary'}" data-offer="${esc(offer?.offer_id||'')}" ${canSelect?'':'disabled'}>${buttonText}</button></article>`;
   }).join('');
 }
 function renderTimeline(events){
@@ -38,9 +38,12 @@ function renderTimeline(events){
   $('timeline').innerHTML=visible.map((event,index)=>{
     const p=event.payload;let label=event.kind.replaceAll('_',' ').toLowerCase();let description='';
     if(event.kind==='MANDATE_CREATED')description='Travel specialist created a policy-bounded mandate. Providers receive only approved trip details.';
-    else if(event.kind==='A2A_REQUEST')description=`${p.source} → ${p.provider} · ${p.route==='direct'?'public trip inquiry':`arbiter round ${p.round}`}`;
+    else if(event.kind==='A2A_REQUEST')description=`${p.source} → ${p.provider} · ${p.route==='direct'?'public trip inquiry':'sealed bid request'}`;
     else if(event.kind==='A2A_RESPONSE')description=`${p.provider} → ${p.source} · ${p.message.total_cents?money(p.message.total_cents):p.message.status}`;
-    else if(event.kind==='OFFER_REGISTERED')description=`${p.provider} · round ${p.round} · ${money(p.total_cents)} · canonical offer registered`;
+    else if(event.kind==='BID_COMMITTED')description=`${p.provider} · sealed coded bid committed`;
+    else if(event.kind==='OFFER_REGISTERED')description=`${p.provider} · ${money(p.total_cents)} · Nash compromise registered`;
+    else if(event.kind==='BARGAINING_RESOLVED')description=`Deterministic Nash bargaining found ${p.agreements.length} feasible compromises`;
+    else if(event.kind==='NO_AGREEMENT')description='No sealed provider bid overlaps the private mandate';
     else if(event.kind==='FUNDS_HELD')description=`${money(p.amount_cents)} reserved after consumer approval`;
     else if(event.kind==='SETTLED')description=`${money(p.paid_cents)} simulated payment · ${p.reservation}`;
     else if(event.kind==='BYPASS_DENIED')description='Agent price override denied. Agent settlement denied. Direct price unchanged.';
@@ -55,9 +58,9 @@ function render(state){
   $('run').disabled=busy||state.state==='HELD';$('run').innerHTML=busy?'Agents are working…':'Find & negotiate packages <span>↗</span>';
   $('bypass').disabled=busy||!state.deal_id;$('download').disabled=!state.deal_id;
   $('status').textContent=(state.state||'Not started').replaceAll('_',' ');$('held').textContent=money(state.hold_cents||0);$('spent').textContent=money(state.spent_cents||0);
-  $('progress').textContent=busy?'Network run in progress':state.state==='SETTLED'?'Simulated settlement complete':state.offers?.length?`${state.offers.length} packages within your limit`:state.deal_id?'No eligible package':'Ready when you are';
+  $('progress').textContent=busy?'Network run in progress':state.state==='SETTLED'?'Simulated settlement complete':state.state==='NO_AGREEMENT'?'Arbiter found no possible agreement':state.offers?.length?`${state.offers.length} Nash compromises within your limit`:state.deal_id?'No eligible package':'Ready when you are';
   $('stage-direct').classList.toggle('done',(state.events||[]).some(e=>e.kind==='A2A_RESPONSE'&&e.payload.route==='direct'));
-  $('stage-negotiate').classList.toggle('done',(state.events||[]).some(e=>e.kind==='OFFER_REGISTERED'&&e.payload.round===2));
+  $('stage-negotiate').classList.toggle('done',(state.events||[]).some(e=>['BARGAINING_RESOLVED','NO_AGREEMENT'].includes(e.kind)));
   $('stage-settle').classList.toggle('done',state.state==='SETTLED');
   $('hold-actions').hidden=state.state!=='HELD';$('receipt').hidden=!state.receipt;
   if(state.receipt)$('receipt').innerHTML=`<h3>Agreement settled · ${money(state.receipt.paid_cents)}</h3><p>${esc(state.receipt.provider)} · Reservation ${esc(state.receipt.reservation)}</p><p>Simulated funds released only after consumer approval and provider confirmation.</p>`;

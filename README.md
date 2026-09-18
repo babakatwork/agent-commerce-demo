@@ -14,6 +14,8 @@ instruction strings are unchanged.
 
 [Download the editable PowerPoint slide](docs/assets/commerce-arbiter-overview.pptx).
 
+The presenter runbook is in [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md).
+
 ```bash
 uv sync
 uv run commerce-demo validate
@@ -71,14 +73,15 @@ order:
    stores buyer and owner capabilities outside SlyData, and returns a non-secret
    deal ID.
 4. `destination_researcher` makes the three fixed-price informational calls.
-5. `travel_cost_analyzer` calls `CommerceArbiter`, which conducts two coded rounds
-   with all three provider networks.
+5. `travel_cost_analyzer` calls `CommerceArbiter`. Each provider agent invokes its
+   coded adapter to commit one sealed bid. The arbiter resolves all bids at once.
 
 Use the **Internal Chat** and **Logs** tabs to follow calls. Select
 `industry/airbnb`, `industry/expedia`, or `industry/booking` from the network tree
-to inspect each seller graph. The expected shortlist is Booking.com $910, Expedia
-$925 and Airbnb $960. nsFlow can negotiate but cannot authorize or settle; use the
-consumer UI or CLI for the separate owner-controlled settlement step.
+to inspect each seller graph. The expected Nash compromises are Booking.com $955,
+Expedia $962.50 and Airbnb $980. nsFlow can negotiate but cannot authorize or
+settle; use the consumer UI or CLI for the separate owner-controlled settlement
+step.
 
 To inspect the retail path, start a new chat with no edited SlyData and send:
 
@@ -92,8 +95,8 @@ RetailMandateAuthority`. `product_researcher` then makes fixed-price information
 calls and opens the coded negotiation through `CommerceArbiter`;
 `price_comparison_agent` makes its informational calls and reads the canonical
 offers through the same tool. The arbiter contacts only Macy's and CarMax for this
-mandate. The replay fixtures return negotiated Macy's and CarMax offers of $390
-and $23,500 respectively. These deliberately unrelated fixture products exercise
+mandate. The replay fixtures return Macy's and CarMax Nash compromises of $420
+and $24,250 respectively. These deliberately unrelated fixture products exercise
 the two original provider edges; they are not intended as substitute products.
 
 To inspect the live-LLM graph instead, set `OPENAI_API_KEY` and run:
@@ -123,10 +126,10 @@ nsFlow creates `nss_local.db`; it is ignored as runtime state.
    `destination_researcher` / `travel_cost_analyzer`.
    The researcher talks directly to all three provider networks. Their fixed
    catalogue prices are Airbnb $1,120, Expedia $1,080 and Booking.com $1,050.
-3. The cost analyzer calls its `CommerceArbiter` coded tool. It opens two bounded
-   rounds with the actual provider networks. Each provider calls its own
-   principal-bound arbiter tool to register its offer. The final prices are
-   **$960, $925 and $910**. No model supplies any of these numbers.
+3. The cost analyzer calls its `CommerceArbiter` coded tool. Each provider calls
+   its principal-bound adapter once to commit a sealed policy bid. The arbiter
+   applies equal-weight Nash bargaining and registers compromises of **$980,
+   $962.50 and $955**. No model supplies any of these numbers.
 4. Click **Try a bypass**. A direct provider conversation still works and retains
    its original catalogue price and caveat. A seller-supplied $0.01 override and a
    buyer's attempted `settle` operation both return `DENIED`.
@@ -139,9 +142,9 @@ Expand audit entries to inspect exactly what each provider received. There is no
 budget in those requests. The downloadable audit is a consumer/admin view and
 does include the private mandate; it is never sent to provider agents.
 
-For an unsuccessful search, start a fresh deal with a $900 limit: no eligible
-package is returned. Prices offered by sellers remain the same regardless of
-the buyer's limit. No extra negotiation rounds reveal a budget threshold.
+For an unsuccessful search, start a fresh deal with a $900 limit. Every seller's
+private floor exceeds that mandate, so the arbiter records `NO_AGREEMENT` without
+revealing any floor or inventing an offer.
 
 The fixtures cover two nights for two adults, parking, Wi-Fi and one local
 activity. Meals and transport to Santa Cruz are explicitly excluded. Dates and
@@ -156,11 +159,42 @@ requirements are validated by code. Fixtures are illustrative, not live availabi
 | Direct A2A requests | `CommerceBoundary` invokes the destination network with an approved public travel or retail request and a new provider-scoped capability. Model-written free text and parent `sly_data` do not cross this edge. |
 | Direct A2A responses | Provider frontman middleware returns the canonical catalogue response with fixed prices and the mandatory caveat, even if the LLM claims to negotiate or book. |
 | Seller identity | Separate provider coded-tool classes and database-issued capabilities bound to one deal, provider, route and round. Identity is never taken from model arguments. |
-| Negotiated prices | Trusted provider policies in `catalog.py`. Round one uses the published demo policy; round two counters at 85% of catalogue, subject to each supplier's private floor. The target is independent of the buyer's limit. |
+| Sealed bids | Provider agents can trigger `quote`, but the coded provider adapter supplies the numeric ask and private floor. The tool returns only a commitment hash; bids and floors never enter model context. |
+| Negotiated prices | The arbiter computes the equal-weight Nash solution over each feasible interval: seller floor to the lower of buyer ceiling and catalogue ask. With linear utilities this is the midpoint. An empty interval produces `NO_AGREEMENT`. |
 | Offers | Arbiter-issued opaque IDs reference immutable records containing the exact mandate subject, terms, price and expiry. An LLM-authored offer ID or price has no authority. |
 | Purchase authority | The mandate tool retains buyer and owner bearer capabilities in trusted runtime state and returns only a deal ID. Agents have mandate creation, `negotiate`/`offers`, or `catalog`/`quote`; none has authorization or settlement. |
 | Settlement | Owner approval → 120-second simulated hold → trusted inventory confirmation → one atomic SQLite ledger entry and receipt. Failure or expiry releases funds. |
-| Repetition/concurrency | Unique `(deal, provider, round)` quotes and one ledger row per deal. Retried quotes do not extend expiry; concurrent conflicting approvals cannot buy several alternatives. |
+| Repetition/concurrency | One committed bid and one immutable compromise per `(deal, provider)`, plus one ledger row per deal. Retries are idempotent; concurrent conflicting approvals cannot buy several alternatives. |
+
+## Deterministic bargaining rule
+
+For provider floor `S` and buyer ceiling `B`, the arbiter first limits the upper
+bound to `U = min(B, catalogue ask)`. It accepts a bid only when `S <= U`. With
+equal bargaining weights and linear utilities, it selects the price that maximizes
+
+```text
+(U - price) × (price - S)
+```
+
+which gives `price = floor((U + S) / 2)` in integer cents. This is the
+equal-weight, linear-utility case of the [Nash bargaining
+solution](https://www.jstor.org/stable/1907266). Provider adapters commit
+their private values before resolution. Consumer agents see neither seller floors
+nor competing bids; provider agents never receive the buyer ceiling. The audit
+shows commitment hashes, the mechanism version and the final result. This is a
+deterministic fairness rule, not a claim that private parties have an incentive to
+report truthfully. The [Myerson–Satterthwaite
+result](https://www.sciencedirect.com/science/article/pii/0022053183900480) explains
+the general bilateral-trade limitation. Production use should choose a mechanism
+for the market shape, such as a reverse second-price auction when several sellers
+offer true substitutes.
+
+As with any mechanism that publishes an outcome, the final price conveys some
+economic information and can support inference when a party knows the rule and
+one endpoint. The hard guarantee here is narrower: raw budgets, floors and bids
+never enter the opposing agent's model context. A production design that also
+needs outcome privacy should use coarser price bands, limited disclosure, or a
+market-specific cryptographic protocol.
 
 The direct-response caveat is rendered by code, not by a prompt:
 

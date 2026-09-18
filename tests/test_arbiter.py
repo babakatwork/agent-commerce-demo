@@ -6,9 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from commerce_demo.arbiter import Arbiter, CommerceError
-from commerce_demo.catalog import (
-    CATALOG, CAVEAT, PROVIDERS, RETAIL_PROVIDERS, default_retail_purchase, default_trip,
-)
+from commerce_demo.catalog import CAVEAT, PROVIDERS, RETAIL_PROVIDERS, default_retail_purchase, default_trip
 from commerce_demo.runtime import capability, configure, prepare_mandate, prepare_retail_mandate
 from commerce_demo.tools import (
     AirbnbCommerce, CommerceArbiter, RetailMandateAuthority, TravelMandateAuthority,
@@ -26,15 +24,14 @@ class ArbiterTests(unittest.TestCase):
         self.buyer = self.deal["buyer_token"]
         self.owner = self.deal["owner_token"]
 
-    def quote(self, provider="airbnb", round_no=1):
-        token = self.service.provider_capability(self.buyer, provider, round_no)
+    def quote(self, provider="airbnb"):
+        token = self.service.provider_capability(self.buyer, provider, 1)
         return self.service.quote(token, provider)
 
     def market(self):
-        for round_no in (1, 2):
-            for provider in PROVIDERS:
-                self.quote(provider, round_no)
-        return self.service.offers(self.buyer)["offers"]
+        for provider in PROVIDERS:
+            self.quote(provider)
+        return self.service.resolve(self.buyer)["offers"]
 
     def test_direct_is_fixed_caveated_and_cannot_quote(self):
         token = self.service.provider_capability(self.buyer, "airbnb")
@@ -45,23 +42,32 @@ class ArbiterTests(unittest.TestCase):
             self.service.quote(token, "airbnb")
         self.assertEqual(self.service.snapshot(self.owner)["spent_cents"], 0)
 
-    def test_two_rounds_are_budget_independent_and_three_options_fit(self):
+    def test_sealed_bids_resolve_to_equal_weight_nash_compromises(self):
         offers = self.market()
-        self.assertEqual([offer["total_cents"] for offer in offers], [91000, 92500, 96000])
+        self.assertEqual([offer["total_cents"] for offer in offers], [95500, 96250, 98000])
         for offer in offers:
             self.assertEqual(sum(item["cents"] for item in offer["line_items"]), offer["total_cents"])
-            self.assertEqual(offer["round"], 2)
+            self.assertEqual(offer["round"], 1)
+            self.assertEqual(offer["mechanism"]["name"], "weighted_nash_bargaining")
+            self.assertNotIn("floor", json.dumps(offer))
+            self.assertNotIn("budget", json.dumps(offer))
         small = self.service.create(default_trip(), 90000)
         for provider in PROVIDERS:
-            for round_no in (1, 2):
-                token = self.service.provider_capability(small["buyer_token"], provider, round_no)
-                quote = self.service.quote(token, provider)
-                self.assertEqual(quote["total_cents"], CATALOG[provider]["round_one_cents"] if round_no == 1 else CATALOG[provider]["floor_cents"])
-        self.assertEqual(self.service.offers(small["buyer_token"])["offers"], [])
+            token = self.service.provider_capability(small["buyer_token"], provider, 1)
+            receipt = self.service.submit_bid(token, provider)
+            self.assertEqual(receipt["status"], "BID_COMMITTED")
+            self.assertNotIn("total_cents", receipt)
+        result = self.service.resolve(small["buyer_token"])
+        self.assertEqual(result["resolution"], "NO_AGREEMENT")
+        self.assertEqual(result["offers"], [])
+        no_agreement = next(event for event in self.service.snapshot(small["owner_token"])["events"]
+                            if event["kind"] == "NO_AGREEMENT")
+        self.assertNotIn("floor", json.dumps(no_agreement))
+        self.assertNotIn("budget", json.dumps(no_agreement))
 
     def test_private_budget_and_other_bids_never_in_seller_view(self):
         self.market()
-        token = self.service.provider_capability(self.buyer, "airbnb", 2)
+        token = self.service.provider_capability(self.buyer, "airbnb", 1)
         for view in (self.service.context(token, "airbnb"), self.service.public_request(token, "airbnb")):
             text = json.dumps(view)
             self.assertNotIn("budget", text)
@@ -109,7 +115,7 @@ class ArbiterTests(unittest.TestCase):
         self.assertEqual(self.service.snapshot(self.owner)["spent_cents"], 0)
         receipt = self.service.confirm(self.owner)
         self.assertEqual(self.service.confirm(self.owner), receipt)
-        self.assertEqual(receipt["paid_cents"], 91000)
+        self.assertEqual(receipt["paid_cents"], 95500)
         self.assertEqual(self.service.snapshot(self.owner)["hold_cents"], 0)
         with self.service.db() as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM ledger").fetchone()[0], 1)
@@ -157,24 +163,26 @@ class ArbiterTests(unittest.TestCase):
         with self.assertRaises(CommerceError):
             self.service.authorize(self.owner, offer["offer_id"])
 
-    def test_quote_retries_do_not_create_new_offer_or_extend_expiry(self):
+    def test_bid_retries_keep_one_commitment_and_resolution_is_idempotent(self):
         first = self.quote()
         self.now += 10
         self.assertEqual(self.quote(), first)
+        first_offers = self.service.resolve(self.buyer)["offers"]
+        self.assertEqual(self.service.resolve(self.buyer)["offers"], first_offers)
         events = self.service.snapshot(self.owner)["events"]
+        self.assertEqual(sum(event["kind"] == "BID_COMMITTED" for event in events), 1)
         self.assertEqual(sum(event["kind"] == "OFFER_REGISTERED" for event in events), 1)
 
-    def test_round_two_cannot_skip_round_one(self):
+    def test_only_one_sealed_bid_round_is_allowed(self):
         with self.assertRaises(CommerceError):
             self.service.provider_capability(self.buyer, "airbnb", 2)
 
-    def test_over_budget_or_superseded_offer_cannot_be_authorized(self):
-        first = self.quote()
+    def test_bid_receipt_has_no_offer_authority_before_resolution(self):
+        bid = self.quote()
+        self.assertEqual(bid["status"], "BID_COMMITTED")
+        self.assertEqual(self.service.offers(self.buyer)["offers"], [])
         with self.assertRaises(CommerceError):
-            self.service.authorize(self.owner, first["offer_id"])
-        self.quote(round_no=2)
-        with self.assertRaises(CommerceError):
-            self.service.authorize(self.owner, first["offer_id"])
+            self.service.authorize(self.owner, bid["commitment"])
 
     def test_persistence_keeps_receipt_and_authorization(self):
         offer = self.market()[0]
@@ -207,14 +215,13 @@ class ArbiterTests(unittest.TestCase):
             with self.assertRaises(CommerceError):
                 self.service.quote(direct, provider)
         self.assertEqual(direct_prices, [45000, 2500000])
-        for round_no in (1, 2):
-            for provider in RETAIL_PROVIDERS:
-                token = self.service.provider_capability(retail["buyer_token"], provider, round_no)
-                public = self.service.public_request(token, provider)
-                self.assertNotIn("budget", json.dumps(public))
-                self.service.quote(token, provider)
-        offers = self.service.offers(retail["buyer_token"])["offers"]
-        self.assertEqual([offer["total_cents"] for offer in offers], [39000, 2350000])
+        for provider in RETAIL_PROVIDERS:
+            token = self.service.provider_capability(retail["buyer_token"], provider, 1)
+            public = self.service.public_request(token, provider)
+            self.assertNotIn("budget", json.dumps(public))
+            self.service.submit_bid(token, provider)
+        offers = self.service.resolve(retail["buyer_token"])["offers"]
+        self.assertEqual([offer["total_cents"] for offer in offers], [42000, 2425000])
         self.assertTrue(all(sum(line["cents"] for line in offer["line_items"]) ==
                             offer["total_cents"] for offer in offers))
         with self.assertRaises(CommerceError):
