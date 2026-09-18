@@ -7,8 +7,8 @@ from pathlib import Path
 
 from commerce_demo.arbiter import Arbiter, CommerceError
 from commerce_demo.catalog import CATALOG, CAVEAT, PROVIDERS, default_trip
-from commerce_demo.runtime import configure
-from commerce_demo.tools import AirbnbCommerce, CommerceArbiter
+from commerce_demo.runtime import capability, configure, prepare_mandate
+from commerce_demo.tools import AirbnbCommerce, CommerceArbiter, TravelMandateAuthority
 
 
 class ArbiterTests(unittest.TestCase):
@@ -191,6 +191,33 @@ class ArbiterTests(unittest.TestCase):
             self.assertEqual(self.service.informational(token, provider)["status"], "INFORMATION_ONLY")
             with self.assertRaises(CommerceError):
                 self.service.quote(token, provider)
+
+    def test_agent_creates_policy_bounded_mandate_without_exposing_capabilities(self):
+        trip = default_trip()
+        request_id = prepare_mandate(trip, 100000)
+        sly_data = {"commerce_request_id": request_id}
+        result = asyncio.run(TravelMandateAuthority().async_invoke(
+            {**trip, "budget_cents": 95000}, sly_data))
+        self.assertEqual(result["status"], "MANDATE_CREATED")
+        self.assertEqual(result["created_by"], "travel_decision_specialist")
+        self.assertEqual(result["budget"], "PRIVATE")
+        self.assertNotIn("commerce_capability", sly_data)
+        self.assertNotIn("owner_token", json.dumps(result))
+        buyer = capability(sly_data, "buyer")
+        self.assertIsInstance(buyer, str)
+        self.assertEqual(self.service.context(buyer, "buyer")["deal_id"], result["deal_id"])
+        self.assertIsNone(capability({"commerce_deal_id": result["deal_id"]}, "buyer"))
+
+    def test_agent_mandate_cannot_exceed_host_policy_or_change_trip(self):
+        trip = default_trip()
+        for args in (
+            {**trip, "budget_cents": 100001},
+            {**trip, "destination": "Paris", "budget_cents": 100000},
+        ):
+            request_id = prepare_mandate(trip, 100000)
+            result = asyncio.run(TravelMandateAuthority().async_invoke(
+                args, {"commerce_request_id": request_id}))
+            self.assertEqual(result["status"], "DENIED")
 
 
 if __name__ == "__main__":

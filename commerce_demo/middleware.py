@@ -10,8 +10,8 @@ import uuid
 from langchain.agents.middleware.types import AgentMiddleware, ModelResponse
 from langchain_core.messages import AIMessage, ToolMessage
 from .arbiter import CommerceError, encode
-from .catalog import CONNECTED
-from .runtime import authority
+from .catalog import CONNECTED, default_trip
+from .runtime import authority, capability, mandate_policy
 
 
 def provider_for(name):
@@ -34,7 +34,16 @@ class CommerceBoundary(AgentMiddleware):
 
     def context(self):
         principal = "buyer" if self.network == "consumer_decision_assistant" else self.network
-        return authority().context(self.sly_data.get("commerce_capability"), principal)
+        token = capability(self.sly_data, principal)
+        if token is None and self.network == "consumer_decision_assistant" and self.agent in (
+                "decision_consultant", "travel_decision_specialist"):
+            return {"deal_id": None, "principal": "buyer", "route": "pre_mandate",
+                    "round": 0, "trip": None}
+        return authority().context(token, principal)
+
+    def token(self):
+        principal = "buyer" if self.network == "consumer_decision_assistant" else self.network
+        return capability(self.sly_data, principal)
 
     async def awrap_tool_call(self, request, handler):
         name = request.tool_call["name"]
@@ -44,7 +53,7 @@ class CommerceBoundary(AgentMiddleware):
         if provider is not None:
             try:
                 self.context()
-                seller_token = authority().provider_capability(self.sly_data.get("commerce_capability"), provider)
+                seller_token = authority().provider_capability(self.token(), provider)
                 from .runner import provider_call
                 content = await asyncio.to_thread(provider_call, provider, seller_token, self.agent)
             except CommerceError as error:
@@ -54,8 +63,10 @@ class CommerceBoundary(AgentMiddleware):
         if isinstance(result, ToolMessage) and (result.status == "error" or name == "CommerceArbiter"):
             service = authority()
             context = self.context()
-            with service.db() as db:
-                service._event(db, context["deal_id"], "TOOL_RESULT", {"agent": self.agent, "tool": name, "result": str(result.content)})
+            if context["deal_id"] is not None:
+                with service.db() as db:
+                    service._event(db, context["deal_id"], "TOOL_RESULT", {
+                        "agent": self.agent, "tool": name, "result": str(result.content)})
         return result
 
     async def awrap_model_call(self, request, handler):
@@ -63,7 +74,7 @@ class CommerceBoundary(AgentMiddleware):
             context = self.context()
         except CommerceError as error:
             return ModelResponse(result=[AIMessage(content=encode({"status": "DENIED", "error": str(error)}))])
-        if not self.visited:
+        if not self.visited and context["deal_id"] is not None:
             service = authority()
             with service.db() as db:
                 service._event(db, context["deal_id"], "AGENT_STARTED", {"network": self.network, "agent": self.agent, "route": context["route"]})
@@ -76,7 +87,7 @@ class CommerceBoundary(AgentMiddleware):
         # Apply this after live LLM output too, independent of prompt compliance.
         messages = response.result
         if self.frontman and messages and isinstance(messages[-1], AIMessage) and not messages[-1].tool_calls:
-            token = self.sly_data["commerce_capability"]
+            token = self.token()
             if self.network == "consumer_decision_assistant":
                 canonical = authority().offers(token)
             elif context["route"] == "direct":
@@ -105,7 +116,7 @@ class CommerceBoundary(AgentMiddleware):
             if self.agent == "decision_consultant":
                 steps = [["travel_decision_specialist"]]
             elif self.agent == "travel_decision_specialist":
-                steps = [["destination_researcher"], ["travel_cost_analyzer"]]
+                steps = [["TravelMandateAuthority"], ["destination_researcher"], ["travel_cost_analyzer"]]
             elif self.agent == "destination_researcher":
                 steps = [[name] for name in names if provider_for(name) in ("airbnb", "expedia", "booking")]
             elif self.agent == "travel_cost_analyzer":
@@ -117,7 +128,10 @@ class CommerceBoundary(AgentMiddleware):
             for name in steps[self.step]:
                 if name not in names:
                     raise RuntimeError(f"Replay requires {name}; actual tools: {names}")
-                if name == "CommerceArbiter":
+                if name == "TravelMandateAuthority":
+                    policy = mandate_policy(self.sly_data)
+                    args = {**policy["trip"], "budget_cents": policy["ceiling_cents"]}
+                elif name == "CommerceArbiter":
                     operation = "negotiate" if self.network == "consumer_decision_assistant" else (
                         "quote" if context["route"] == "arbiter" else "catalog")
                     args = {"operation": operation}

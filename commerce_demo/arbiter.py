@@ -92,7 +92,7 @@ class Arbiter:
             raise CommerceError("Unknown deal.")
         return deal
 
-    def create(self, trip, budget_cents):
+    def create(self, trip, budget_cents, created_by="trusted_application"):
         trip = validate_trip(trip)
         if type(budget_cents) is not int or not 1 <= budget_cents <= 10000000:
             raise CommerceError("Budget must be a positive integer amount in cents.")
@@ -102,7 +102,8 @@ class Arbiter:
                        (deal, encode(trip), budget_cents, "OPEN", self.clock()))
             owner = self._mint(db, deal, "owner", "control")
             buyer = self._mint(db, deal, "buyer", "buyer")
-            self._event(db, deal, "MANDATE_CREATED", {"trip": trip, "budget": "private to arbiter"})
+            self._event(db, deal, "MANDATE_CREATED", {
+                "trip": trip, "budget": "private to arbiter", "created_by": created_by})
         return {"deal_id": deal, "owner_token": owner, "buyer_token": buyer}
 
     def context(self, token, principal=None):

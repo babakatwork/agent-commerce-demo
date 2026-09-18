@@ -103,9 +103,9 @@ def make_handler(mode="replay"):
                                 raise ValueError("Cancel or confirm the active hold before starting again.")
                         arrival = date.fromisoformat(body["arrival"])
                         trip = {**default_trip(), "arrival": arrival.isoformat(), "departure": (arrival + timedelta(days=2)).isoformat()}
-                        session["deal"] = authority().create(trip, body["budget_cents"])
+                        session["deal"] = None
                         session.update({"busy": True, "error": None, "bypass": None})
-                        threading.Thread(target=self.run_job, args=(session,), daemon=True).start()
+                        threading.Thread(target=self.run_job, args=(session, trip, body["budget_cents"]), daemon=True).start()
                         return self.reply(202, {"status": "RUNNING"})
                     if not session["deal"]:
                         raise ValueError("Start the demonstration first.")
@@ -132,10 +132,12 @@ def make_handler(mode="replay"):
                 except (ValueError, TypeError, KeyError) as error:
                     return self.reply(400, {"error": str(error)})
 
-        def run_job(self, session):
+        def run_job(self, session, trip, budget_cents):
             try:
                 from .runner import run_consumer
-                run_consumer(session["deal"]["buyer_token"])
+                _, deal = run_consumer(trip, budget_cents)
+                with lock:
+                    session["deal"] = deal
                 state = authority().snapshot(session["deal"]["owner_token"])
                 if not any(event["kind"] == "OFFER_REGISTERED" for event in state["events"]):
                     raise CommerceError("The networks did not register any offers. Check live model configuration or use replay mode.")

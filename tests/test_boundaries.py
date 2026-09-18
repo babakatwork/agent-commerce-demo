@@ -75,6 +75,13 @@ class BoundaryTests(unittest.IsolatedAsyncioTestCase):
         result = await boundary.awrap_model_call(SimpleNamespace(), forbidden_model)
         self.assertEqual(json.loads(result.result[-1].content)["status"], "DENIED")
 
+    async def test_consumer_provider_edge_fails_before_agent_creates_mandate(self):
+        boundary = CommerceBoundary("consumer_decision_assistant", "destination_researcher", False, {})
+        async def forbidden_model(request):
+            self.fail("Provider-facing consumer agents must not run before mandate creation.")
+        result = await boundary.awrap_model_call(SimpleNamespace(), forbidden_model)
+        self.assertEqual(json.loads(result.result[-1].content)["status"], "DENIED")
+
     async def test_arbiter_route_does_not_turn_model_prose_into_a_quote(self):
         token = self.service.provider_capability(self.deal["buyer_token"], "airbnb", 1)
         boundary = CommerceBoundary("airbnb", "travel_planning_assistant", True, {"commerce_capability": token})

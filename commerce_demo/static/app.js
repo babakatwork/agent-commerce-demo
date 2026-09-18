@@ -37,7 +37,7 @@ function renderTimeline(events){
   if(!visible.length)return;
   $('timeline').innerHTML=visible.map((event,index)=>{
     const p=event.payload;let label=event.kind.replaceAll('_',' ').toLowerCase();let description='';
-    if(event.kind==='MANDATE_CREATED')description='Private mandate saved. Only approved trip details leave the consumer side.';
+    if(event.kind==='MANDATE_CREATED')description='Travel specialist created a policy-bounded mandate. Providers receive only approved trip details.';
     else if(event.kind==='A2A_REQUEST')description=`${p.source} → ${p.provider} · ${p.route==='direct'?'public trip inquiry':`arbiter round ${p.round}`}`;
     else if(event.kind==='A2A_RESPONSE')description=`${p.provider} → ${p.source} · ${p.message.total_cents?money(p.message.total_cents):p.message.status}`;
     else if(event.kind==='OFFER_REGISTERED')description=`${p.provider} · round ${p.round} · ${money(p.total_cents)} · canonical offer registered`;

@@ -1,9 +1,42 @@
 """Neuro-SAN CodedTools: limited capabilities on both sides of the market."""
 import asyncio
+from .catalog import validate_trip
 from neuro_san.interfaces.coded_tool import CodedTool
 from .arbiter import CommerceError
 from .catalog import PROVIDERS
-from .runtime import authority
+from .runtime import authority, capability, mandate_policy, register_agent_mandate
+
+
+class TravelMandateAuthority(CodedTool):
+    """Agent-invoked issuance constrained by a trusted host policy."""
+
+    async def async_invoke(self, args, sly_data):
+        try:
+            framework_keys = {"origin", "origin_str", "progress_reporter", "reservationist"}
+            supplied = {key: value for key, value in args.items() if key not in framework_keys}
+            required = {"destination", "arrival", "departure", "travelers", "amenities", "budget_cents"}
+            if set(supplied) != required:
+                raise CommerceError("A complete structured trip and budget_cents are required.")
+            if not isinstance(sly_data, dict):
+                raise CommerceError("Mandate creation requires a runtime session.")
+            existing = capability(sly_data, "buyer")
+            if existing:
+                context = authority().context(existing, "buyer")
+                return {"status": "MANDATE_EXISTS", "deal_id": context["deal_id"],
+                        "trip": context["trip"], "budget": "PRIVATE", "simulation": True}
+            trip = validate_trip({key: supplied[key] for key in required if key != "budget_cents"})
+            budget = supplied["budget_cents"]
+            policy = mandate_policy(sly_data)
+            if trip != policy["trip"]:
+                raise CommerceError("The proposed trip is outside the trusted request scope.")
+            if type(budget) is not int or not 1 <= budget <= policy["ceiling_cents"]:
+                raise CommerceError("The proposed budget exceeds the trusted mandate ceiling.")
+            deal = authority().create(trip, budget, created_by="travel_decision_specialist")
+            register_agent_mandate(sly_data, deal)
+            return {"status": "MANDATE_CREATED", "deal_id": deal["deal_id"], "trip": trip,
+                    "budget": "PRIVATE", "created_by": "travel_decision_specialist", "simulation": True}
+        except (CommerceError, ValueError) as error:
+            return {"error": str(error), "status": "DENIED", "simulation": True}
 
 
 class CommerceArbiter(CodedTool):
@@ -15,7 +48,7 @@ class CommerceArbiter(CodedTool):
             framework_keys = {"origin", "origin_str", "progress_reporter", "reservationist"}
             if set(args) - framework_keys != {"operation"} or not isinstance(args["operation"], str):
                 raise CommerceError("Only an operation is accepted. Agents cannot supply prices, budgets, identities or approvals.")
-            token = sly_data.get("commerce_capability")
+            token = capability(sly_data, self.principal)
             service = authority()
             context = service.context(token, self.principal)
             operation = args["operation"]
@@ -74,7 +107,8 @@ class LinkedInCommerce(CommerceArbiter):
 class FixtureSearch(CodedTool):
     """Offline inventory replaces web-search egress in copied provider networks."""
     async def async_invoke(self, args, sly_data):
-        token = sly_data.get("commerce_capability")
+        # Provider fixture calls always arrive with an explicit provider-scoped token.
+        token = capability(sly_data, "buyer")
         try:
             context = authority().context(token)
             return authority().informational(token, context["principal"])

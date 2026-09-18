@@ -31,8 +31,28 @@ def build():
                 "network": network, "agent": agent["name"], "frontman": index == 0, "sly_data": True}}]
             # Outbound calls are mediated explicitly; no parent's private dictionary is forwarded.
             agent["allow"] = {"to_downstream": {"sly_data": False}, "to_upstream": {"sly_data": False}}
+            if buyer and agent["name"] == "travel_decision_specialist":
+                # This agent has no provider edge. It creates the bounded mandate
+                # before delegating research to agents that do contact providers.
+                agent.setdefault("tools", []).append("TravelMandateAuthority")
             if (buyer and agent["name"] == "travel_cost_analyzer") or (not buyer and index == 0):
                 agent.setdefault("tools", []).append("CommerceArbiter")
+        if buyer:
+            data["tools"].append({
+                "name": "TravelMandateAuthority", "class": "commerce_demo.tools.TravelMandateAuthority",
+                "function": {
+                    "description": "Create the private, code-bounded travel mandate before delegating provider research. "
+                                   "Only the travel_decision_specialist has this tool. Call it once with the user's "
+                                   "structured trip and maximum budget; code rejects anything outside the trusted scope.",
+                    "parameters": {"type": "object", "additionalProperties": False,
+                        "properties": {
+                            "destination": {"type": "string"},
+                            "arrival": {"type": "string", "description": "YYYY-MM-DD"},
+                            "departure": {"type": "string", "description": "YYYY-MM-DD"},
+                            "travelers": {"type": "integer"},
+                            "amenities": {"type": "array", "items": {"type": "string"}},
+                            "budget_cents": {"type": "integer"}},
+                        "required": ["destination", "arrival", "departure", "travelers", "amenities", "budget_cents"]}}})
         operations = ["negotiate", "offers"] if buyer else ["catalog", "quote"]
         data["tools"].append({
             "name": "CommerceArbiter", "class": "commerce_demo.tools." + ("CommerceArbiter" if buyer else PROVIDERS[network]),

@@ -13,7 +13,7 @@ def main():
     parser.add_argument("command", choices=["demo", "serve", "validate"], nargs="?", default="demo")
     parser.add_argument("--mode", choices=["replay", "live"], default="replay")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--budget", type=int, default=1000, help="Whole USD; held outside the agent context")
+    parser.add_argument("--budget", type=int, default=1000, help="Whole-USD ceiling enforced around the agent proposal")
     parser.add_argument("--db", type=Path, default=ROOT / ".runtime" / "commerce.sqlite")
     parser.add_argument("--settle", action="store_true", help="Explicitly authorize the cheapest eligible simulated package")
     args = parser.parse_args()
@@ -30,9 +30,8 @@ def main():
         serve(args.port, args.mode)
     else:
         from .runner import run_consumer
-        deal = engine.create(default_trip(), args.budget * 100)
         print(f"Running actual Neuro-SAN networks in {args.mode} mode. All inventory and money are simulated.", flush=True)
-        offers = run_consumer(deal["buyer_token"])
+        offers, deal = run_consumer(default_trip(), args.budget * 100)
         print(json.dumps(offers, indent=2), flush=True)
         if args.settle and offers.get("offers"):
             engine.authorize(deal["owner_token"], offers["offers"][0]["offer_id"])

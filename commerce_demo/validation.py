@@ -19,6 +19,14 @@ def validate():
                     assert after["middleware"][0]["class"] == "commerce_demo.middleware.CommerceBoundary"
                 assert "toolbox" not in after, "Uncontrolled web-search egress"
             assert "CommerceArbiter" in by_name
+            if network == "consumer_decision_assistant":
+                assert "TravelMandateAuthority" in by_name
+                self_creator = by_name["travel_decision_specialist"]
+                assert "TravelMandateAuthority" in self_creator.get("tools", [])
+                assert not set(self_creator.get("tools", [])) & {"/industry/airbnb", "/industry/expedia", "/industry/booking"}
+                for name, agent in by_name.items():
+                    if name != "travel_decision_specialist":
+                        assert "TravelMandateAuthority" not in agent.get("tools", [])
         counts[network] = len(original["tools"])
     return {"networks": len(counts), "original_nodes": counts, "original_prompt_changes": 0,
             "original_edges_removed": 0, "modes": ["replay", "live"]}

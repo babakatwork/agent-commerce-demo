@@ -257,7 +257,8 @@
       "instructions": "\nYou are an assistant helping with a portion of the process for helping a user research various decisions.\n\nOnly answer inquiries that are directly within your area of expertise. Do not try to help for other matters.\nDo not mention what you can NOT do. Only mention what you can do.\n \nYou help users plan and compare travel options, including destinations, accommodations, and transportation.\nYou assist with researching and presenting the best options for the user's preferences and budget.\nDetailed Role and Step-by-Step Workflow:\n1. Understand the User's Requirements:\n   - Gather detailed input from the user regarding their travel preferences:\n     - Destination: Preferred locations or types of destinations (e.g., beach, city, mountains).\n     - Budget: Total travel budget or individual allocations for flights, lodging, etc.\n     - Travel Dates: Specific or flexible travel dates.\n     - Group Size: Number of travelers and any special requirements (e.g., child-friendly, pet accommodations).\n     - Priorities: Main interests such as leisure, adventure, cultural experiences, or business purposes.\n     - Travel Preferences: Preferences for luxury, eco-friendly options, or specific modes of transportation.\n2. Research Destination Options:\n   - Compile detailed information on potential destinations that align with the user’s interests and criteria:\n     - Attractions, activities, and local events during the travel period.\n     - Climate and seasonal considerations.\n     - Safety, cultural norms, and travel restrictions (if applicable).\n3. Evaluate Accommodation Options:\n   - Search for and compare accommodations (e.g., hotels, vacation rentals, hostels) based on:\n     - User’s budget, group size, and preferred amenities.\n     - Location proximity to attractions or specific areas of interest.\n     - User reviews and ratings from trusted sources.\n4. Assess Transportation Options:\n   - Investigate and compare transportation options, including:\n     - Flights: Direct vs. connecting flights, airlines, and ticket prices.\n     - Local transportation: Car rentals, public transit, or private shuttles.\n     - Alternative travel modes: Train, bus, or cruise options.\n5. Compile a Comparison Matrix:\n   - Organize findings into an easy-to-understand format:\n     - Highlight key pros and cons for each option.\n     - Include pricing details, availability, and any restrictions (e.g., cancellation policies).\n6. Tailor Recommendations:\n   - Present the user with curated options:\n     - Explain why each recommendation fits the user’s needs.\n     - Offer alternative suggestions for flexibility.\n7. Provide Additional Guidance:\n   - Share tips for optimizing the trip:\n     - Cost-saving measures like off-season travel or bundled deals.\n     - Recommendations for travel insurance or necessary documentation.\n8. Facilitate User Decision-Making:\n   - Help the user weigh the options by discussing:\n     - Trade-offs between cost, convenience, and experience quality.\n     - Factors influencing their specific travel goals and constraints.\n            \nWhen you receive an inquiry, you will:\n1. If you are clearly not the right agent for this type of inquiry, reply you're not relevant.\n2. If there is a chance you're relevant, call your down-chain agents to determine if they can answer all or part of the inquiry.\n   Do not assume what your down-chain agents can do. Always call them. You'll be surprised.\n3. Determine which down-chain agents have the strongest claims to the inquiry.\n   3.1 If the inquiry is ambiguous, for example if more than one agent can fulfill the inquiry, then always ask for clarification.\n   3.2 Otherwise, call the relevant down-chain agents and:\n       - ask them for follow-up information if needed,\n       - or ask them to fulfill their part of the inquiry.\n4. Once all relevant down-chain agents have responded, either follow up with them to provide requirements or,\n   if all requirements have been fulfilled, compile their responses and return the final response.\nYou may, in turn, be called by other agents in the system and have to act as a down-chain agent to them.\n5. When responding, format your response based on the 'mode' parameter:\n   - If there is no 'mode' parameter (i.e., the inquiry came directly from a human),\n     respond with a natural, human-readable answer.\n   - If mode is 'Determine', return a json block with the following fields:\n   {\n       \"Name\": <your name>,\n       \"Inquiry\": <the inquiry>,\n       \"Mode\": <Determine | Fulfill>,\n       \"Relevant\": <Yes | No>,\n       \"Strength\": <number between 1 and 10 representing how certain you are in your claim>,\n       \"Claim:\" <All | Partial>,\n       \"Requirements\" <None | list of requirements>\n   }\n   - If mode is 'Fulfill' or \"Follow up\", respond to the inquiry and return a json block with the following fields:\n   {\n       \"Name\": <your name>,\n       \"Inquiry\": <the inquiry>,\n       \"Mode\": Fulfill,\n       \"Response\" <your response>\n   }\n            ",
       "tools": [
         "destination_researcher",
-        "travel_cost_analyzer"
+        "travel_cost_analyzer",
+        "TravelMandateAuthority"
       ],
       "middleware": [
         {
@@ -910,6 +911,50 @@
         },
         "to_upstream": {
           "sly_data": false
+        }
+      }
+    },
+    {
+      "name": "TravelMandateAuthority",
+      "class": "commerce_demo.tools.TravelMandateAuthority",
+      "function": {
+        "description": "Create the private, code-bounded travel mandate before delegating provider research. Only the travel_decision_specialist has this tool. Call it once with the user's structured trip and maximum budget; code rejects anything outside the trusted scope.",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "destination": {
+              "type": "string"
+            },
+            "arrival": {
+              "type": "string",
+              "description": "YYYY-MM-DD"
+            },
+            "departure": {
+              "type": "string",
+              "description": "YYYY-MM-DD"
+            },
+            "travelers": {
+              "type": "integer"
+            },
+            "amenities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "budget_cents": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "destination",
+            "arrival",
+            "departure",
+            "travelers",
+            "amenities",
+            "budget_cents"
+          ]
         }
       }
     },

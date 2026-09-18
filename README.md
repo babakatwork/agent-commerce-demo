@@ -3,8 +3,10 @@
 A standalone overlay project depending on `neuro-san-studio`. It preserves the
 consumer network and all six connected B2C networks. Direct conversations return
 fixed informational catalogue prices. The arbiter alone computes negotiated
-offers and records simulated settlement. The original agent instruction strings
-are unchanged.
+offers and records simulated settlement. The consumer-side
+`travel_decision_specialist`, which has no direct provider connection, creates a
+policy-bounded mandate before provider research begins. The original agent
+instruction strings are unchanged.
 
 ```bash
 uv sync
@@ -27,13 +29,74 @@ is the supported installation; the copied registry files live next to the Python
 package. `uv.lock` fixes the complete dependency set, independently of the parent
 consultant project. No parent networks or prompts were edited.
 
+## See the system under the hood with nsFlow
+
+Use Neuro-SAN Studio's `ns run` command; do not invoke the standalone `nsflow`
+entry point. From a fresh checkout:
+
+```bash
+uv sync --locked
+source .venv/bin/activate
+ns run
+```
+
+Without shell activation, use `uv run ns run`. Open http://localhost:4173 and
+select `industry/consumer_decision_assistant`. The graph shows the new
+`travel_decision_specialist → TravelMandateAuthority` edge alongside the
+original consumer hierarchy and external provider edges.
+
+No mandate or SlyData must be created manually. In the Chat tab send:
+
+```text
+Find a Santa Cruz vacation for the configured weekend with a maximum budget of
+$1000. Create the mandate, negotiate through the arbiter, and do not settle.
+```
+
+For deterministic replay, code fixes the trusted trip policy to the next
+Friday–Sunday and the maximum mandate ceiling to $1,000. Watch the graph in this
+order:
+
+1. `decision_consultant` delegates to `travel_decision_specialist`.
+2. `travel_decision_specialist` calls `TravelMandateAuthority`. It has no Airbnb,
+   Expedia or Booking.com edge.
+3. The mandate tool validates the proposed trip and amount against trusted policy,
+   stores buyer and owner capabilities outside SlyData, and returns a non-secret
+   deal ID.
+4. `destination_researcher` makes the three fixed-price informational calls.
+5. `travel_cost_analyzer` calls `CommerceArbiter`, which conducts two coded rounds
+   with all three provider networks.
+
+Use the **Internal Chat** and **Logs** tabs to follow calls. Select
+`industry/airbnb`, `industry/expedia`, or `industry/booking` from the network tree
+to inspect each seller graph. The expected shortlist is Booking.com $910, Expedia
+$925 and Airbnb $960. nsFlow can negotiate but cannot authorize or settle; use the
+consumer UI or CLI for the separate owner-controlled settlement step.
+
+To inspect the live-LLM graph instead, set `OPENAI_API_KEY` and run:
+
+```bash
+AGENT_MANIFEST_FILE="$PWD/registries/live/manifest.hocon" ns run
+```
+
+If this checkout was moved after its virtual environment was created, rebuild the
+environment because activation scripts contain absolute paths:
+
+```bash
+deactivate 2>/dev/null || true
+uv venv --clear .venv
+uv sync --locked
+```
+
+nsFlow creates `nss_local.db`; it is ignored as runtime state.
+
 ## A five-minute demo
 
 1. Start `uv run commerce-demo serve` and open the local page. Leave the $1,000
-   private limit and the explicit Friday–Sunday dates, then click **Find &
-   negotiate packages**.
-2. The original consumer hierarchy runs: `decision_consultant` →
-   `travel_decision_specialist` → `destination_researcher` / `travel_cost_analyzer`.
+   ceiling and explicit Friday–Sunday dates, then click **Find & negotiate
+   packages**. The travel specialist creates the mandate through coded policy.
+2. The consumer hierarchy runs: `decision_consultant` →
+   `travel_decision_specialist` → `TravelMandateAuthority` →
+   `destination_researcher` / `travel_cost_analyzer`.
    The researcher talks directly to all three provider networks. Their fixed
    catalogue prices are Airbnb $1,120, Expedia $1,080 and Booking.com $1,050.
 3. The cost analyzer calls its `CommerceArbiter` coded tool. It opens two bounded
@@ -64,13 +127,14 @@ requirements are validated by code. Fixtures are illustrative, not live availabi
 
 | Boundary | Enforcement |
 | --- | --- |
-| Private budget | Structured consumer form → SQLite; absent from all model prompts, tool schemas and provider contexts. |
+| Agent-created mandate | Only `travel_decision_specialist` has `TravelMandateAuthority`, and it has no provider edge. Code rejects trips outside the trusted request and amounts above its ceiling. |
+| Private budget | The consumer-side specialist may receive and propose the maximum; the authoritative ceiling is trusted host policy. Middleware removes budget and arbitrary free text from every provider request. |
 | Direct A2A requests | `CommerceBoundary` invokes the destination network with an approved public trip request and a new provider-scoped capability. Model-written free text and parent `sly_data` do not cross this edge. |
 | Direct A2A responses | Provider frontman middleware returns the canonical catalogue response with fixed prices and the mandatory caveat, even if the LLM claims to negotiate or book. |
 | Seller identity | Separate provider coded-tool classes and database-issued capabilities bound to one deal, provider, route and round. Identity is never taken from model arguments. |
 | Negotiated prices | Trusted provider policies in `catalog.py`. Round one uses the published demo policy; round two counters at 85% of catalogue, subject to each supplier's private floor. The target is independent of the buyer's limit. |
 | Offers | Arbiter-issued opaque IDs reference immutable records containing exact trip, terms, price and expiry. An LLM-authored offer ID or price has no authority. |
-| Purchase authority | Only the consumer application holds the owner capability. Agents have `negotiate`/`offers` or `catalog`/`quote`; no agent has an authorization or settlement operation. |
+| Purchase authority | The mandate tool retains buyer and owner bearer capabilities in trusted runtime state and returns only a deal ID. Agents have mandate creation, `negotiate`/`offers`, or `catalog`/`quote`; none has authorization or settlement. |
 | Settlement | Owner approval → 120-second simulated hold → trusted inventory confirmation → one atomic SQLite ledger entry and receipt. Failure or expiry releases funds. |
 | Repetition/concurrency | Unique `(deal, provider, round)` quotes and one ledger row per deal. Retried quotes do not extend expiry; concurrent conflicting approvals cannot buy several alternatives. |
 
@@ -89,7 +153,8 @@ by a local fixture tool so it cannot become an uncontrolled outbound channel.
 ## Files and network copies
 
 - `commerce_demo/arbiter.py`: database, capabilities, offers, state machine and ledger.
-- `commerce_demo/tools.py`: buyer and provider `CodedTool` adapters.
+- `commerce_demo/tools.py`: agent mandate authority plus buyer and provider
+  `CodedTool` adapters.
 - `commerce_demo/middleware.py`: public-message boundary, canonical responses and
   the clearly labelled scripted model decisions used only in replay mode.
 - `commerce_demo/runner.py`: genuine Neuro-SAN direct sessions, including calls to
@@ -117,7 +182,8 @@ uv run commerce-demo validate
 uv run python -m unittest discover -s tests -v
 ```
 
-The tests include a full Neuro-SAN replay (nine provider exchanges and six offers),
+The tests include bare-nsFlow-style agent mandate creation, a full Neuro-SAN
+replay (nine provider exchanges and six offers),
 noncompliant-model response injection against the live-mode middleware, budget
 leak attempts, forged identities, unauthorized settlement, expiry, failure,
 concurrent approvals, retries, persistence and unchanged prompts/connections.
@@ -133,11 +199,11 @@ malicious Python plugins, an administrator editing SQLite, or arbitrary code
 execution. Database events are append-only by application convention, not a
 cryptographically tamper-evident audit trail.
 
-The UI binds to loopback and requires a session cookie, same-origin requests and
-a CSRF token for changes. Owner credentials stay on the server. Start through
-`commerce-demo`, which creates and scopes the required runtime capabilities.
-Calling these networks in a bare `ns run`/nsflow session without that application
-context deliberately returns `DENIED`.
+The consumer UI binds to loopback and requires a session cookie, same-origin
+requests and a CSRF token for changes. Owner credentials stay on the server. A
+bare `ns run` replay uses a fixed local trip policy and $1,000 maximum ceiling;
+the travel specialist creates the mandate on its first turn. Provider-facing
+agents still fail closed if they run before mandate creation.
 
 Offers expire after 15 minutes. Hold expiry is processed when state is read or
 confirmation is attempted; there is no background payment processor. Browser
