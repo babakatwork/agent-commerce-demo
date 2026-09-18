@@ -1,0 +1,17 @@
+This project includes modified copies of seven agent networks and two shared
+configuration files from Cognizant's neuro-san-studio, licensed under Apache 2.0.
+Copyright © 2025-2026 Cognizant Technology Solutions Corp, www.cognizant.com.
+Source: https://github.com/cognizant-ai-lab/neuro-san-studio
+The exact input files are retained under upstream/ with SHA-256 provenance.
+They were copied from the existing consultant workspace's registries snapshot;
+they are not claimed to be a fresh checkout of current upstream main.
+
+Modifications: added CommerceArbiter coded tools and CommerceBoundary middleware;
+replaced search execution with a deterministic local catalogue; disabled private
+sly_data propagation to external networks; bounded execution; provided replay
+and live model configurations. All original instruction strings and network
+connections are preserved. scripts/build_networks.py regenerates both variants.
+
+Airbnb, Expedia, Booking.com, Macy's, CarMax and LinkedIn names identify the copied
+example networks. This demo is not affiliated with those businesses, uses no
+business booking APIs, and never transfers real money or makes real reservations.

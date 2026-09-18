@@ -1,0 +1,9 @@
+{
+  "industry/consumer_decision_assistant.hocon": true,
+  "industry/airbnb.hocon": true,
+  "industry/expedia.hocon": true,
+  "industry/booking.hocon": true,
+  "industry/macys.hocon": true,
+  "industry/carmax.hocon": true,
+  "industry/LinkedInJobSeekerSupportNetwork.hocon": true
+}

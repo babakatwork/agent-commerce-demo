@@ -1,0 +1,37 @@
+{
+  "consumer_decision_assistant": {
+    "sha256": "a221c625f98a15d21520c5ef9cb6a407b1fddb5bfeb43fa2d9f52e1a998f683b",
+    "original_prompt_count": 19,
+    "prompt_changes": 0
+  },
+  "airbnb": {
+    "sha256": "4b80838867fc9fb4a02664f67918ec35c30e6a061ac453cbe646f170ab1b8d8a",
+    "original_prompt_count": 9,
+    "prompt_changes": 0
+  },
+  "expedia": {
+    "sha256": "a87eda9cd50ebf358d65809b2820ba9fad460e1214f45bd547becbba7c293b58",
+    "original_prompt_count": 12,
+    "prompt_changes": 0
+  },
+  "booking": {
+    "sha256": "c2ab9557848ffab42b6e2d5dd25b23a8417869359c56df0fcda4c10ad830b278",
+    "original_prompt_count": 13,
+    "prompt_changes": 0
+  },
+  "macys": {
+    "sha256": "bc0e2e7941d5fc30b7ed660e3cc7aadb3eafd026d60c88148785d011a9f09fb6",
+    "original_prompt_count": 22,
+    "prompt_changes": 0
+  },
+  "carmax": {
+    "sha256": "c186cdf9925a3a47668d76a7e5fe1651ab25a1a60347606faa00bd5590bf1834",
+    "original_prompt_count": 12,
+    "prompt_changes": 0
+  },
+  "LinkedInJobSeekerSupportNetwork": {
+    "sha256": "306258020b29877be49ed771b24ff8c2138b19ca3750c920a8b2d6b651f9bec4",
+    "original_prompt_count": 6,
+    "prompt_changes": 0
+  }
+}
