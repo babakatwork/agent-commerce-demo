@@ -1,10 +1,11 @@
 """Neuro-SAN CodedTools: limited capabilities on both sides of the market."""
 import asyncio
-from .catalog import validate_trip
+from .catalog import providers_for, validate_retail_purchase, validate_trip
 from neuro_san.interfaces.coded_tool import CodedTool
 from .arbiter import CommerceError
-from .catalog import PROVIDERS
-from .runtime import authority, capability, mandate_policy, register_agent_mandate
+from .runtime import (
+    authority, capability, mandate_policy, register_agent_mandate, retail_mandate_policy,
+)
 
 
 class TravelMandateAuthority(CodedTool):
@@ -39,6 +40,36 @@ class TravelMandateAuthority(CodedTool):
             return {"error": str(error), "status": "DENIED", "simulation": True}
 
 
+class RetailMandateAuthority(CodedTool):
+    """Agent-invoked retail issuance constrained by trusted host policy."""
+
+    async def async_invoke(self, args, sly_data):
+        try:
+            framework_keys = {"origin", "origin_str", "progress_reporter", "reservationist"}
+            supplied = {key: value for key, value in args.items() if key not in framework_keys}
+            required = {"query", "providers", "quantity", "budget_cents"}
+            if set(supplied) != required or not isinstance(sly_data, dict):
+                raise CommerceError("A complete structured retail request and budget_cents are required.")
+            existing = capability(sly_data, "buyer")
+            if existing:
+                context = authority().context(existing, "buyer")
+                return {"status": "MANDATE_EXISTS", "deal_id": context["deal_id"],
+                        "kind": context["kind"], "budget": "PRIVATE", "simulation": True}
+            purchase = validate_retail_purchase({key: supplied[key] for key in required if key != "budget_cents"})
+            budget = supplied["budget_cents"]
+            policy = retail_mandate_policy(sly_data)
+            if purchase != policy["purchase"]:
+                raise CommerceError("The proposed purchase is outside the trusted request scope.")
+            if type(budget) is not int or not 1 <= budget <= policy["ceiling_cents"]:
+                raise CommerceError("The proposed budget exceeds the trusted retail mandate ceiling.")
+            deal = authority().create_retail(purchase, budget, created_by="retail_decision_specialist")
+            register_agent_mandate(sly_data, deal)
+            return {"status": "MANDATE_CREATED", "deal_id": deal["deal_id"], "purchase": purchase,
+                    "budget": "PRIVATE", "created_by": "retail_decision_specialist", "simulation": True}
+        except (CommerceError, ValueError) as error:
+            return {"error": str(error), "status": "DENIED", "simulation": True}
+
+
 class CommerceArbiter(CodedTool):
     principal = "buyer"
 
@@ -57,11 +88,11 @@ class CommerceArbiter(CodedTool):
                     return service.offers(token)
                 if operation != "negotiate":
                     raise CommerceError("Buyer agents may negotiate through code or read offers; they cannot authorize or settle.")
-                # Fixed protocol, both rounds, all providers. No LLM price/target/budget argument.
+                # Fixed protocol, both rounds, providers selected by the coded mandate.
                 from .runner import provider_call
                 failures = []
                 for round_no in (1, 2):
-                    for provider in PROVIDERS:
+                    for provider in providers_for(context["kind"]):
                         try:
                             seller_token = service.provider_capability(token, provider, round_no)
                             await asyncio.to_thread(provider_call, provider, seller_token, "CommerceArbiter")

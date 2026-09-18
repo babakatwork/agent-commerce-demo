@@ -21,12 +21,20 @@ def validate():
             assert "CommerceArbiter" in by_name
             if network == "consumer_decision_assistant":
                 assert "TravelMandateAuthority" in by_name
+                assert "RetailMandateAuthority" in by_name
                 self_creator = by_name["travel_decision_specialist"]
                 assert "TravelMandateAuthority" in self_creator.get("tools", [])
                 assert not set(self_creator.get("tools", [])) & {"/industry/airbnb", "/industry/expedia", "/industry/booking"}
+                retail_creator = by_name["retail_decision_specialist"]
+                assert "RetailMandateAuthority" in retail_creator.get("tools", [])
+                assert not set(retail_creator.get("tools", [])) & {"/industry/macys", "/industry/carmax"}
+                for name in ("product_researcher", "price_comparison_agent"):
+                    assert "CommerceArbiter" in by_name[name].get("tools", [])
                 for name, agent in by_name.items():
                     if name != "travel_decision_specialist":
                         assert "TravelMandateAuthority" not in agent.get("tools", [])
+                    if name != "retail_decision_specialist":
+                        assert "RetailMandateAuthority" not in agent.get("tools", [])
         counts[network] = len(original["tools"])
     return {"networks": len(counts), "original_nodes": counts, "original_prompt_changes": 0,
             "original_edges_removed": 0, "modes": ["replay", "live"]}

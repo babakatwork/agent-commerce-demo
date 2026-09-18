@@ -6,9 +6,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from commerce_demo.arbiter import Arbiter, CommerceError
-from commerce_demo.catalog import CATALOG, CAVEAT, PROVIDERS, default_trip
-from commerce_demo.runtime import capability, configure, prepare_mandate
-from commerce_demo.tools import AirbnbCommerce, CommerceArbiter, TravelMandateAuthority
+from commerce_demo.catalog import (
+    CATALOG, CAVEAT, PROVIDERS, RETAIL_PROVIDERS, default_retail_purchase, default_trip,
+)
+from commerce_demo.runtime import capability, configure, prepare_mandate, prepare_retail_mandate
+from commerce_demo.tools import (
+    AirbnbCommerce, CommerceArbiter, RetailMandateAuthority, TravelMandateAuthority,
+)
 
 
 class ArbiterTests(unittest.TestCase):
@@ -192,6 +196,30 @@ class ArbiterTests(unittest.TestCase):
             with self.assertRaises(CommerceError):
                 self.service.quote(token, provider)
 
+    def test_retail_mandate_negotiates_macys_and_carmax_only_through_arbiter(self):
+        retail = self.service.create_retail(default_retail_purchase(), 3000000)
+        direct_prices = []
+        for provider in RETAIL_PROVIDERS:
+            direct = self.service.provider_capability(retail["buyer_token"], provider)
+            info = self.service.informational(direct, provider)
+            direct_prices.append(info["total_cents"])
+            self.assertEqual(info["caveat"], CAVEAT)
+            with self.assertRaises(CommerceError):
+                self.service.quote(direct, provider)
+        self.assertEqual(direct_prices, [45000, 2500000])
+        for round_no in (1, 2):
+            for provider in RETAIL_PROVIDERS:
+                token = self.service.provider_capability(retail["buyer_token"], provider, round_no)
+                public = self.service.public_request(token, provider)
+                self.assertNotIn("budget", json.dumps(public))
+                self.service.quote(token, provider)
+        offers = self.service.offers(retail["buyer_token"])["offers"]
+        self.assertEqual([offer["total_cents"] for offer in offers], [39000, 2350000])
+        self.assertTrue(all(sum(line["cents"] for line in offer["line_items"]) ==
+                            offer["total_cents"] for offer in offers))
+        with self.assertRaises(CommerceError):
+            self.service.provider_capability(retail["buyer_token"], "airbnb", 1)
+
     def test_agent_creates_policy_bounded_mandate_without_exposing_capabilities(self):
         trip = default_trip()
         request_id = prepare_mandate(trip, 100000)
@@ -218,6 +246,24 @@ class ArbiterTests(unittest.TestCase):
             result = asyncio.run(TravelMandateAuthority().async_invoke(
                 args, {"commerce_request_id": request_id}))
             self.assertEqual(result["status"], "DENIED")
+
+    def test_retail_specialist_creates_bounded_mandate_without_capability_leak(self):
+        purchase = default_retail_purchase()
+        request_id = prepare_retail_mandate(purchase, 3000000)
+        sly_data = {"commerce_request_id": request_id}
+        result = asyncio.run(RetailMandateAuthority().async_invoke(
+            {**purchase, "budget_cents": 2900000}, sly_data))
+        self.assertEqual(result["status"], "MANDATE_CREATED")
+        self.assertEqual(result["created_by"], "retail_decision_specialist")
+        self.assertNotIn("commerce_capability", sly_data)
+        self.assertNotIn("owner_token", json.dumps(result))
+        context = self.service.context(capability(sly_data, "buyer"), "buyer")
+        self.assertEqual(context["kind"], "retail")
+        denied = asyncio.run(RetailMandateAuthority().async_invoke(
+            {**purchase, "budget_cents": 3000001},
+            {"commerce_request_id": prepare_retail_mandate(purchase, 3000000)},
+        ))
+        self.assertEqual(denied["status"], "DENIED")
 
 
 if __name__ == "__main__":

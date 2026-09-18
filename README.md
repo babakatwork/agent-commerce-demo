@@ -3,9 +3,9 @@
 A standalone overlay project depending on `neuro-san-studio`. It preserves the
 consumer network and all six connected B2C networks. Direct conversations return
 fixed informational catalogue prices. The arbiter alone computes negotiated
-offers and records simulated settlement. The consumer-side
-`travel_decision_specialist`, which has no direct provider connection, creates a
-policy-bounded mandate before provider research begins. The original agent
+offers and records simulated settlement. Consumer-side travel and retail
+specialists, neither of which has a direct provider connection, create
+policy-bounded mandates before provider research begins. The original agent
 instruction strings are unchanged.
 
 ```bash
@@ -42,8 +42,10 @@ ns run
 
 Without shell activation, use `uv run ns run`. Open http://localhost:4173 and
 select `industry/consumer_decision_assistant`. The graph shows the new
-`travel_decision_specialist → TravelMandateAuthority` edge alongside the
-original consumer hierarchy and external provider edges.
+`TravelMandateAuthority` and `RetailMandateAuthority` edges alongside the original
+consumer hierarchy and external provider edges. `product_researcher` and
+`price_comparison_agent` both expose `CommerceArbiter` as well as their preserved
+Macy's and CarMax connections.
 
 No mandate or SlyData must be created manually. In the Chat tab send:
 
@@ -71,6 +73,22 @@ Use the **Internal Chat** and **Logs** tabs to follow calls. Select
 to inspect each seller graph. The expected shortlist is Booking.com $910, Expedia
 $925 and Airbnb $960. nsFlow can negotiate but cannot authorize or settle; use the
 consumer UI or CLI for the separate owner-controlled settlement step.
+
+To inspect the retail path, start a new chat with no edited SlyData and send:
+
+```text
+Use Macy's and CarMax to research the configured retail purchase. Create the
+retail mandate, use the commerce arbiter, and do not settle.
+```
+
+The graph runs `decision_consultant → retail_decision_specialist →
+RetailMandateAuthority`. `product_researcher` then makes fixed-price informational
+calls and opens the coded negotiation through `CommerceArbiter`;
+`price_comparison_agent` makes its informational calls and reads the canonical
+offers through the same tool. The arbiter contacts only Macy's and CarMax for this
+mandate. The replay fixtures return negotiated Macy's and CarMax offers of $390
+and $23,500 respectively. These deliberately unrelated fixture products exercise
+the two original provider edges; they are not intended as substitute products.
 
 To inspect the live-LLM graph instead, set `OPENAI_API_KEY` and run:
 
@@ -127,13 +145,13 @@ requirements are validated by code. Fixtures are illustrative, not live availabi
 
 | Boundary | Enforcement |
 | --- | --- |
-| Agent-created mandate | Only `travel_decision_specialist` has `TravelMandateAuthority`, and it has no provider edge. Code rejects trips outside the trusted request and amounts above its ceiling. |
+| Agent-created mandate | Only the provider-disconnected travel and retail specialists have their respective mandate tools. Code rejects subjects outside the trusted request and amounts above its ceiling. |
 | Private budget | The consumer-side specialist may receive and propose the maximum; the authoritative ceiling is trusted host policy. Middleware removes budget and arbitrary free text from every provider request. |
-| Direct A2A requests | `CommerceBoundary` invokes the destination network with an approved public trip request and a new provider-scoped capability. Model-written free text and parent `sly_data` do not cross this edge. |
+| Direct A2A requests | `CommerceBoundary` invokes the destination network with an approved public travel or retail request and a new provider-scoped capability. Model-written free text and parent `sly_data` do not cross this edge. |
 | Direct A2A responses | Provider frontman middleware returns the canonical catalogue response with fixed prices and the mandatory caveat, even if the LLM claims to negotiate or book. |
 | Seller identity | Separate provider coded-tool classes and database-issued capabilities bound to one deal, provider, route and round. Identity is never taken from model arguments. |
 | Negotiated prices | Trusted provider policies in `catalog.py`. Round one uses the published demo policy; round two counters at 85% of catalogue, subject to each supplier's private floor. The target is independent of the buyer's limit. |
-| Offers | Arbiter-issued opaque IDs reference immutable records containing exact trip, terms, price and expiry. An LLM-authored offer ID or price has no authority. |
+| Offers | Arbiter-issued opaque IDs reference immutable records containing the exact mandate subject, terms, price and expiry. An LLM-authored offer ID or price has no authority. |
 | Purchase authority | The mandate tool retains buyer and owner bearer capabilities in trusted runtime state and returns only a deal ID. Agents have mandate creation, `negotiate`/`offers`, or `catalog`/`quote`; none has authorization or settlement. |
 | Settlement | Owner approval → 120-second simulated hold → trusted inventory confirmation → one atomic SQLite ledger entry and receipt. Failure or expiry releases funds. |
 | Repetition/concurrency | Unique `(deal, provider, round)` quotes and one ledger row per deal. Retried quotes do not extend expiry; concurrent conflicting approvals cannot buy several alternatives. |
@@ -168,11 +186,10 @@ by a local fixture tool so it cannot become an uncontrolled outbound channel.
 - `scripts/build_networks.py`: reproducible mechanical overlay; it adds tool
   descriptions and middleware, without editing any original `instructions` field.
 
-All six B2C networks have the arbiter adapter. Transaction inventory is implemented
-for the three travel providers. Macy's, CarMax and LinkedIn fail closed for
-transactions and report that no transaction inventory is configured; their source
-graphs are retained for later domain adapters. This is a travel demo, not an
-implementation of checkout for all six businesses.
+All six B2C networks have the arbiter adapter. Transaction fixtures are implemented
+for the three travel providers plus Macy's and CarMax. LinkedIn remains advisory
+and fails closed for transactions. This demonstrates the enforcement protocol;
+it is not a production checkout integration for any provider.
 
 Regenerate both modes and verify prompt/connection preservation:
 
@@ -182,8 +199,8 @@ uv run commerce-demo validate
 uv run python -m unittest discover -s tests -v
 ```
 
-The tests include bare-nsFlow-style agent mandate creation, a full Neuro-SAN
-replay (nine provider exchanges and six offers),
+The tests include bare-nsFlow-style travel and retail mandate creation, full
+Neuro-SAN travel and Macy's/CarMax replays,
 noncompliant-model response injection against the live-mode middleware, budget
 leak attempts, forged identities, unauthorized settlement, expiry, failure,
 concurrent approvals, retries, persistence and unchanged prompts/connections.
@@ -201,9 +218,10 @@ cryptographically tamper-evident audit trail.
 
 The consumer UI binds to loopback and requires a session cookie, same-origin
 requests and a CSRF token for changes. Owner credentials stay on the server. A
-bare `ns run` replay uses a fixed local trip policy and $1,000 maximum ceiling;
-the travel specialist creates the mandate on its first turn. Provider-facing
-agents still fail closed if they run before mandate creation.
+bare `ns run` replay uses a fixed local trip policy with a $1,000 maximum ceiling,
+or a fixed retail fixture policy with a $30,000 maximum ceiling. The relevant
+specialist creates the mandate on its first turn. Provider-facing agents still
+fail closed if they run before mandate creation.
 
 Offers expire after 15 minutes. Hold expiry is processed when state is read or
 confirmation is attempted; there is no background payment processor. Browser

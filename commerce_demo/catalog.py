@@ -8,7 +8,9 @@ CAVEAT = (
     "transaction are completed through the arbiter."
 )
 PROVIDERS = ("airbnb", "expedia", "booking")
-CONNECTED = (*PROVIDERS, "macys", "carmax", "LinkedInJobSeekerSupportNetwork")
+RETAIL_PROVIDERS = ("macys", "carmax")
+TRANSACTION_PROVIDERS = (*PROVIDERS, *RETAIL_PROVIDERS)
+CONNECTED = (*TRANSACTION_PROVIDERS, "LinkedInJobSeekerSupportNetwork")
 SCOPE = "Two nights for two adults, parking, Wi-Fi and one local activity. Meals and travel to Santa Cruz excluded."
 CATALOG = {
     "airbnb": {
@@ -29,7 +31,37 @@ CATALOG = {
         "lodging_cents": 79000, "fees_cents": 16000, "activity_cents": 10000,
         "cancellation": "Full refund until 24 hours before arrival.",
     },
+    "macys": {
+        "item_id": "macys-weekender-set", "title": "Illustrative Macy's weekender luggage set",
+        "list_cents": 45000, "round_one_cents": 42500, "floor_cents": 39000,
+        "cancellation": "Simulated return permitted within 30 days.",
+    },
+    "carmax": {
+        "item_id": "carmax-corolla-demo", "title": "Illustrative CarMax pre-owned compact car",
+        "list_cents": 2500000, "round_one_cents": 2425000, "floor_cents": 2350000,
+        "cancellation": "Simulated offer subject to vehicle inspection and availability.",
+    },
 }
+
+RETAIL_SCOPE = "Illustrative retail sourcing request; product details and availability are fixture data, not live inventory."
+
+
+def validate_retail_purchase(purchase):
+    if set(purchase) != {"query", "providers", "quantity"}:
+        raise ValueError("Use only query, providers and quantity for a retail mandate.")
+    if purchase["query"] != "illustrative retail purchase":
+        raise ValueError("The replay fixture supports only its configured retail purchase.")
+    if purchase["providers"] != list(RETAIL_PROVIDERS) or purchase["quantity"] != 1:
+        raise ValueError("The retail demo is scoped to one item from Macy's or CarMax.")
+    return {"query": purchase["query"], "providers": list(purchase["providers"]), "quantity": 1}
+
+
+def default_retail_purchase():
+    return {"query": "illustrative retail purchase", "providers": list(RETAIL_PROVIDERS), "quantity": 1}
+
+
+def providers_for(kind):
+    return PROVIDERS if kind == "travel" else RETAIL_PROVIDERS if kind == "retail" else ()
 
 
 def default_trip(today=None):
@@ -58,7 +90,7 @@ def validate_trip(trip):
     return dict(trip)
 
 
-def public_catalog(provider, trip):
+def public_catalog(provider, subject, kind="travel"):
     if provider not in CATALOG:
         return {
             "provider": provider, "status": "INFORMATION_ONLY", "simulation": True,
@@ -68,7 +100,9 @@ def public_catalog(provider, trip):
     item = CATALOG[provider]
     return {
         "provider": provider, "status": "INFORMATION_ONLY", "simulation": True,
-        "item_id": item["item_id"], "title": item["title"], "trip": trip,
-        "currency": "USD", "total_cents": item["list_cents"], "scope": SCOPE,
+        "item_id": item["item_id"], "title": item["title"],
+        "trip" if kind == "travel" else "purchase": subject,
+        "currency": "USD", "total_cents": item["list_cents"],
+        "scope": SCOPE if kind == "travel" else RETAIL_SCOPE,
         "cancellation": item["cancellation"], "caveat": CAVEAT,
     }

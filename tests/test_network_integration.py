@@ -5,7 +5,7 @@ from pathlib import Path
 
 from commerce_demo.arbiter import Arbiter
 from commerce_demo.catalog import CAVEAT, default_trip
-from commerce_demo.runner import call_network, run_consumer, setup
+from commerce_demo.runner import call_network, run_consumer, run_retail, setup
 from commerce_demo.runtime import configure
 from commerce_demo.validation import validate
 
@@ -58,6 +58,38 @@ class NetworkIntegrationTests(unittest.TestCase):
                     "SELECT payload FROM events WHERE kind='MANDATE_CREATED' ORDER BY seq DESC LIMIT 1"
                 ).fetchone()
             self.assertEqual(json.loads(event["payload"])["created_by"], "travel_decision_specialist")
+
+    def test_retail_agents_use_arbiter_for_macys_and_carmax(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = Arbiter(Path(temp) / "retail.sqlite")
+            configure(service)
+            setup("replay")
+            result, deal = run_retail()
+            self.assertEqual([offer["provider"] for offer in result["offers"]], ["macys", "carmax"])
+            self.assertEqual([offer["total_cents"] for offer in result["offers"]], [39000, 2350000])
+            snapshot = service.snapshot(deal["owner_token"])
+            self.assertEqual(snapshot["kind"], "retail")
+            mandate = next(event for event in snapshot["events"] if event["kind"] == "MANDATE_CREATED")
+            self.assertEqual(mandate["payload"]["created_by"], "retail_decision_specialist")
+            requests = [event["payload"] for event in snapshot["events"] if event["kind"] == "A2A_REQUEST"]
+            self.assertEqual(len(requests), 8)
+            self.assertEqual(sum(request["route"] == "direct" for request in requests), 4)
+            self.assertTrue(all("budget" not in json.dumps(request["message"]) for request in requests))
+            tool_agents = {event["payload"]["agent"] for event in snapshot["events"]
+                           if event["kind"] == "TOOL_RESULT"}
+            self.assertTrue({"product_researcher", "price_comparison_agent"} <= tool_agents)
+
+    def test_bare_nsflow_retail_prompt_routes_without_manual_sly_data(self):
+        with tempfile.TemporaryDirectory() as temp:
+            service = Arbiter(Path(temp) / "retail-nsflow.sqlite")
+            configure(service)
+            setup("replay")
+            result = json.loads(call_network(
+                "consumer_decision_assistant",
+                "Use Macy's and CarMax to research a retail purchase through the arbiter.",
+                {},
+            ))
+            self.assertEqual([offer["provider"] for offer in result["offers"]], ["macys", "carmax"])
 
 
 if __name__ == "__main__":

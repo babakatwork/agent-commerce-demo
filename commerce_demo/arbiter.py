@@ -13,7 +13,10 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from .catalog import CATALOG, CONNECTED, PROVIDERS, SCOPE, public_catalog, validate_trip
+from .catalog import (
+    CATALOG, CONNECTED, RETAIL_SCOPE, SCOPE, providers_for, public_catalog,
+    validate_retail_purchase, validate_trip,
+)
 
 
 class CommerceError(ValueError):
@@ -51,6 +54,9 @@ class Arbiter:
                     id TEXT PRIMARY KEY, deal TEXT NOT NULL, provider TEXT NOT NULL,
                     amount INTEGER NOT NULL, reservation TEXT NOT NULL);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(deals)")}
+            if "kind" not in columns:
+                db.execute("ALTER TABLE deals ADD COLUMN kind TEXT NOT NULL DEFAULT 'travel'")
 
     @contextmanager
     def db(self):
@@ -92,36 +98,43 @@ class Arbiter:
             raise CommerceError("Unknown deal.")
         return deal
 
-    def create(self, trip, budget_cents, created_by="trusted_application"):
-        trip = validate_trip(trip)
+    def _create(self, subject, budget_cents, kind, created_by):
         if type(budget_cents) is not int or not 1 <= budget_cents <= 10000000:
             raise CommerceError("Budget must be a positive integer amount in cents.")
         with self.db() as db:
             deal = secrets.token_hex(12)
-            db.execute("INSERT INTO deals(id,trip,budget,state,created) VALUES(?,?,?,?,?)",
-                       (deal, encode(trip), budget_cents, "OPEN", self.clock()))
+            db.execute("INSERT INTO deals(id,trip,budget,state,created,kind) VALUES(?,?,?,?,?,?)",
+                       (deal, encode(subject), budget_cents, "OPEN", self.clock(), kind))
             owner = self._mint(db, deal, "owner", "control")
             buyer = self._mint(db, deal, "buyer", "buyer")
             self._event(db, deal, "MANDATE_CREATED", {
-                "trip": trip, "budget": "private to arbiter", "created_by": created_by})
+                "kind": kind, "subject": subject, "budget": "private to arbiter", "created_by": created_by})
         return {"deal_id": deal, "owner_token": owner, "buyer_token": buyer}
+
+    def create(self, trip, budget_cents, created_by="trusted_application"):
+        return self._create(validate_trip(trip), budget_cents, "travel", created_by)
+
+    def create_retail(self, purchase, budget_cents, created_by="retail_decision_specialist"):
+        return self._create(validate_retail_purchase(purchase), budget_cents, "retail", created_by)
 
     def context(self, token, principal=None):
         with self.db() as db:
             cap = self._auth(db, token, principal)
             deal = self._deal(db, cap["deal"])
             # Never return budget, owner capability, other providers' quotes or acceptance status to sellers.
-            return {"deal_id": cap["deal"], "principal": cap["principal"],
-                    "route": cap["route"], "round": cap["round"], "trip": json.loads(deal["trip"])}
+            result = {"deal_id": cap["deal"], "principal": cap["principal"],
+                      "route": cap["route"], "round": cap["round"], "kind": deal["kind"]}
+            result["trip" if deal["kind"] == "travel" else "purchase"] = json.loads(deal["trip"])
+            return result
 
     def provider_capability(self, buyer_token, provider, round_no=0):
         if provider not in CONNECTED or type(round_no) is not int or round_no not in (0, 1, 2):
             raise CommerceError("Invalid provider or negotiation round.")
-        if round_no and provider not in PROVIDERS:
-            raise CommerceError("No transaction inventory for this network.")
         with self.db() as db:
             cap = self._auth(db, buyer_token, "buyer")
             deal = self._deal(db, cap["deal"])
+            if round_no and provider not in providers_for(deal["kind"]):
+                raise CommerceError("Provider is outside this mandate's transaction scope.")
             if round_no and deal["state"] not in ("OPEN", "NEGOTIATING"):
                 raise CommerceError("This deal is no longer open for negotiation.")
             if round_no == 2 and db.execute(
@@ -135,7 +148,9 @@ class Arbiter:
 
     def public_request(self, token, principal):
         context = self.context(token, principal)
-        request = {"trip": context["trip"], "route": context["route"], "scope": SCOPE}
+        subject_key = "trip" if context["kind"] == "travel" else "purchase"
+        request = {subject_key: context[subject_key], "route": context["route"],
+                   "scope": SCOPE if context["kind"] == "travel" else RETAIL_SCOPE}
         if context["route"] == "arbiter":
             request.update({"round": context["round"], "request": "Submit the deterministic provider quote through CommerceArbiter."})
             if context["round"] == 2:
@@ -155,14 +170,15 @@ class Arbiter:
 
     def informational(self, token, provider):
         context = self.context(token, provider)
-        return public_catalog(provider, context["trip"])
+        subject_key = "trip" if context["kind"] == "travel" else "purchase"
+        return public_catalog(provider, context[subject_key], context["kind"])
 
     def quote(self, token, provider):
         with self.db() as db:
             cap = self._auth(db, token, provider)
-            if provider not in PROVIDERS or cap["route"] != "arbiter" or cap["round"] not in (1, 2):
-                raise CommerceError("Direct conversations cannot negotiate or issue binding offers. Use the arbiter.")
             deal = self._deal(db, cap["deal"])
+            if provider not in providers_for(deal["kind"]) or cap["route"] != "arbiter" or cap["round"] not in (1, 2):
+                raise CommerceError("Direct conversations cannot negotiate or issue binding offers. Use the arbiter.")
             if deal["state"] not in ("OPEN", "NEGOTIATING"):
                 raise CommerceError("This deal is no longer negotiating.")
             previous = db.execute("SELECT body FROM offers WHERE deal=? AND provider=? AND round=?",
@@ -174,18 +190,23 @@ class Arbiter:
                 item["floor_cents"], item["list_cents"] * 85 // 100)
             offer_id = secrets.token_hex(16)
             expires = self.clock() + 900
+            if deal["kind"] == "travel":
+                line_items = [
+                    {"label": "Two nights, parking and Wi-Fi", "cents": item["lodging_cents"]},
+                    {"label": "Taxes and fees", "cents": item["fees_cents"]},
+                    {"label": "Local activity for two", "cents": item["activity_cents"]},
+                ]
+            else:
+                line_items = [{"label": item["title"], "cents": item["list_cents"]}]
+            line_items.append({"label": "Arbiter-negotiated discount", "cents": amount - item["list_cents"]})
             body = {
                 "offer_id": offer_id, "provider": provider, "item_id": item["item_id"],
                 "title": item["title"], "round": cap["round"], "currency": "USD",
                 "total_cents": amount, "list_cents": item["list_cents"],
                 "savings_cents": item["list_cents"] - amount,
-                "line_items": [
-                    {"label": "Two nights, parking and Wi-Fi", "cents": item["lodging_cents"]},
-                    {"label": "Taxes and fees", "cents": item["fees_cents"]},
-                    {"label": "Local activity for two", "cents": item["activity_cents"]},
-                    {"label": "Arbiter-negotiated discount", "cents": amount - item["list_cents"]},
-                ],
-                "trip": json.loads(deal["trip"]), "scope": SCOPE,
+                "line_items": line_items,
+                "trip" if deal["kind"] == "travel" else "purchase": json.loads(deal["trip"]),
+                "scope": SCOPE if deal["kind"] == "travel" else RETAIL_SCOPE,
                 "cancellation": item["cancellation"], "expires_at": expires,
                 "simulation": True, "status": "OFFER_ONLY",
             }
@@ -207,7 +228,7 @@ class Arbiter:
             offers = [json.loads(row["body"]) for row in rows
                       if row["amount"] <= deal["budget"] and row["expires"] > self.clock()]
             return {"state": deal["state"], "offers": offers, "simulation": True,
-                    "message": "Select one package to authorize simulated settlement." if offers
+                    "message": "Select one offer to authorize simulated settlement." if offers
                     else "No unexpired offer meets the private budget. Nothing has been booked."}
 
     def _expire_hold(self, db, deal):
@@ -224,7 +245,7 @@ class Arbiter:
             if deal["selected"] == offer_id and deal["state"] in ("HELD", "SETTLED"):
                 return {"state": deal["state"], "offer_id": offer_id}
             if deal["state"] not in ("OPEN", "NEGOTIATING"):
-                raise CommerceError("A deal can authorize only one package.")
+                raise CommerceError("A deal can authorize only one offer.")
             offer = db.execute("SELECT * FROM offers WHERE id=? AND deal=?", (offer_id, cap["deal"])).fetchone()
             if offer is None or offer["expires"] <= self.clock():
                 raise CommerceError("Unknown or expired offer.")
@@ -281,7 +302,9 @@ class Arbiter:
             events = [{"seq": row["seq"], "kind": row["kind"], "at": row["at"],
                        "payload": json.loads(row["payload"])} for row in db.execute(
                            "SELECT * FROM events WHERE deal=? ORDER BY seq", (deal["id"],))]
-            return {"deal_id": deal["id"], "trip": json.loads(deal["trip"]), "budget_cents": deal["budget"],
+            result = {"deal_id": deal["id"], "kind": deal["kind"], "budget_cents": deal["budget"],
                     "state": deal["state"], "hold_cents": deal["hold"], "spent_cents": deal["spent"],
                     "selected_offer_id": deal["selected"],
                     "receipt": json.loads(deal["receipt"]) if deal["receipt"] else None, "events": events}
+            result["trip" if deal["kind"] == "travel" else "purchase"] = json.loads(deal["trip"])
+            return result

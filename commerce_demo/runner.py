@@ -2,8 +2,10 @@
 import json
 import os
 from .arbiter import encode
-from .catalog import default_trip
-from .runtime import ROOT, authority, control_for_request, prepare_mandate
+from .catalog import default_retail_purchase, default_trip
+from .runtime import (
+    ROOT, authority, control_for_request, prepare_mandate, prepare_retail_mandate,
+)
 
 
 def setup(mode="replay"):
@@ -61,4 +63,23 @@ def run_consumer(trip=None, budget_cents=100000):
     control = control_for_request(request_id)
     if control is None:
         raise RuntimeError("The travel specialist did not create a mandate.")
+    return result, control
+
+
+def run_retail(purchase=None, budget_cents=3000000):
+    """Run the Macy's/CarMax branch with an agent-created retail mandate."""
+    purchase = purchase or default_retail_purchase()
+    request_id = prepare_retail_mandate(purchase, budget_cents)
+    message = encode({
+        "request": "Create a bounded retail mandate, consult Macy's and CarMax, and use the arbiter.",
+        "purchase": purchase,
+        "maximum_budget_cents": budget_cents,
+    })
+    result = json.loads(call_network(
+        "consumer_decision_assistant", message,
+        {"commerce_request_id": request_id, "commerce_domain": "retail"},
+    ))
+    control = control_for_request(request_id)
+    if control is None:
+        raise RuntimeError("The retail specialist did not create a mandate.")
     return result, control

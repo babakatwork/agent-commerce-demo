@@ -35,7 +35,13 @@ def build():
                 # This agent has no provider edge. It creates the bounded mandate
                 # before delegating research to agents that do contact providers.
                 agent.setdefault("tools", []).append("TravelMandateAuthority")
-            if (buyer and agent["name"] == "travel_cost_analyzer") or (not buyer and index == 0):
+            if buyer and agent["name"] == "retail_decision_specialist":
+                # Like its travel peer, this specialist has no provider edge and
+                # creates the bounded mandate before downstream market activity.
+                agent.setdefault("tools", []).append("RetailMandateAuthority")
+            if (buyer and agent["name"] in (
+                    "travel_cost_analyzer", "product_researcher", "price_comparison_agent")) or (
+                    not buyer and index == 0):
                 agent.setdefault("tools", []).append("CommerceArbiter")
         if buyer:
             data["tools"].append({
@@ -53,11 +59,23 @@ def build():
                             "amenities": {"type": "array", "items": {"type": "string"}},
                             "budget_cents": {"type": "integer"}},
                         "required": ["destination", "arrival", "departure", "travelers", "amenities", "budget_cents"]}}})
+            data["tools"].append({
+                "name": "RetailMandateAuthority", "class": "commerce_demo.tools.RetailMandateAuthority",
+                "function": {
+                    "description": "Create a private, code-bounded retail mandate before Macy's or CarMax research. "
+                                   "Only retail_decision_specialist has this tool; code enforces the trusted scope.",
+                    "parameters": {"type": "object", "additionalProperties": False,
+                        "properties": {
+                            "query": {"type": "string"},
+                            "providers": {"type": "array", "items": {"type": "string"}},
+                            "quantity": {"type": "integer"},
+                            "budget_cents": {"type": "integer"}},
+                        "required": ["query", "providers", "quantity", "budget_cents"]}}})
         operations = ["negotiate", "offers"] if buyer else ["catalog", "quote"]
         data["tools"].append({
             "name": "CommerceArbiter", "class": "commerce_demo.tools." + ("CommerceArbiter" if buyer else PROVIDERS[network]),
             "function": {"description": "Mandatory coded authority for negotiated prices. Direct discussions are informational. "
-                         + ("Use negotiate to consult all travel providers, then offers to read the shortlist. Settlement requires the consumer application." if buyer
+                         + ("Use negotiate to consult the providers in the coded travel or retail mandate, then offers to read the shortlist. Settlement requires the consumer application." if buyer
                             else "Use catalog for direct inquiries; quote for arbiter-routed requests. Code sets all prices."),
                          "parameters": {"type": "object", "additionalProperties": False,
                                         "properties": {"operation": {"type": "string", "enum": operations}},

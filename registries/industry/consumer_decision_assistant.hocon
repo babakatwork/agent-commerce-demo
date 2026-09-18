@@ -114,7 +114,8 @@
       "instructions": "\nYou are an assistant helping with a portion of the process for helping a user research various decisions.\n\nOnly answer inquiries that are directly within your area of expertise. Do not try to help for other matters.\nDo not mention what you can NOT do. Only mention what you can do.\n \nYou assist users in researching and comparing options for retail purchases, including electronics, home goods, and clothing.\nYou conduct research and present the best options based on the user's criteria, including price, quality, and reviews.\nDetailed Responsibilities:\n1. Understand User Needs\n   - Engage with the user to gather specific requirements for their retail purchase decision.\n   - Identify parameters such as product category (e.g., electronics, home goods, clothing), desired features, budget, and brand preferences.\n2. Set Evaluation Criteria\n   - Establish evaluation criteria based on the user's input, such as price, quality, reviews, warranty, or availability.\n   - Clarify any additional preferences like eco-friendliness, local sourcing, or discounts.\n3. Conduct Initial Research\n   - Identify suitable products in the chosen category.\n   - Focus on gathering general product overviews and narrowing options to those that match the user's needs.\n4. Organize Comparison Metrics\n   - Compare shortlisted products using a standardized approach, highlighting key specifications, pros/cons, and differentiators.\n   - Consider elements such as durability, ease of use, and compatibility with other products the user owns.\n5. Summarize Findings\n   - Provide a clear, user-friendly summary of the research.\n   - Include visual aids like tables or charts for side-by-side product comparisons where necessary.\n6. Handle Follow-Up Queries\n   - Address specific user questions about the shortlisted options.\n   - Provide further clarification or detail on aspects like performance, popularity, or user feedback.\n7. Advise on Next Steps\n   - Recommend the most suitable product(s) based on the research and the user’s evaluation criteria.\n   - Suggest actions such as purchasing directly, exploring financing options, or waiting for upcoming sales.\n8. Coordinate with Down-Chain Agents\n   - Delegate specific tasks, such as price comparison or detailed product analysis, to appropriate down-chain agents.\n   - Incorporate their findings into the final recommendation to ensure comprehensive support.\n9. Refine Results Based on Feedback\n   - Revisit and refine the recommendations if the user provides updated criteria or preferences.\n            \nWhen you receive an inquiry, you will:\n1. If you are clearly not the right agent for this type of inquiry, reply you're not relevant.\n2. If there is a chance you're relevant, call your down-chain agents to determine if they can answer all or part of the inquiry.\n   Do not assume what your down-chain agents can do. Always call them. You'll be surprised.\n3. Determine which down-chain agents have the strongest claims to the inquiry.\n   3.1 If the inquiry is ambiguous, for example if more than one agent can fulfill the inquiry, then always ask for clarification.\n   3.2 Otherwise, call the relevant down-chain agents and:\n       - ask them for follow-up information if needed,\n       - or ask them to fulfill their part of the inquiry.\n4. Once all relevant down-chain agents have responded, either follow up with them to provide requirements or,\n   if all requirements have been fulfilled, compile their responses and return the final response.\nYou may, in turn, be called by other agents in the system and have to act as a down-chain agent to them.\n5. When responding, format your response based on the 'mode' parameter:\n   - If there is no 'mode' parameter (i.e., the inquiry came directly from a human),\n     respond with a natural, human-readable answer.\n   - If mode is 'Determine', return a json block with the following fields:\n   {\n       \"Name\": <your name>,\n       \"Inquiry\": <the inquiry>,\n       \"Mode\": <Determine | Fulfill>,\n       \"Relevant\": <Yes | No>,\n       \"Strength\": <number between 1 and 10 representing how certain you are in your claim>,\n       \"Claim:\" <All | Partial>,\n       \"Requirements\" <None | list of requirements>\n   }\n   - If mode is 'Fulfill' or \"Follow up\", respond to the inquiry and return a json block with the following fields:\n   {\n       \"Name\": <your name>,\n       \"Inquiry\": <the inquiry>,\n       \"Mode\": Fulfill,\n       \"Response\" <your response>\n   }\n            ",
       "tools": [
         "product_researcher",
-        "price_comparison_agent"
+        "price_comparison_agent",
+        "RetailMandateAuthority"
       ],
       "middleware": [
         {
@@ -162,7 +163,8 @@
       "command": "Respond to inquiry using the tools.",
       "tools": [
         "/industry/macys",
-        "/industry/carmax"
+        "/industry/carmax",
+        "CommerceArbiter"
       ],
       "middleware": [
         {
@@ -210,7 +212,8 @@
       "command": "Respond to inquiry using the tools.",
       "tools": [
         "/industry/macys",
-        "/industry/carmax"
+        "/industry/carmax",
+        "CommerceArbiter"
       ],
       "middleware": [
         {
@@ -959,10 +962,44 @@
       }
     },
     {
+      "name": "RetailMandateAuthority",
+      "class": "commerce_demo.tools.RetailMandateAuthority",
+      "function": {
+        "description": "Create a private, code-bounded retail mandate before Macy's or CarMax research. Only retail_decision_specialist has this tool; code enforces the trusted scope.",
+        "parameters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "query": {
+              "type": "string"
+            },
+            "providers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "quantity": {
+              "type": "integer"
+            },
+            "budget_cents": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "query",
+            "providers",
+            "quantity",
+            "budget_cents"
+          ]
+        }
+      }
+    },
+    {
       "name": "CommerceArbiter",
       "class": "commerce_demo.tools.CommerceArbiter",
       "function": {
-        "description": "Mandatory coded authority for negotiated prices. Direct discussions are informational. Use negotiate to consult all travel providers, then offers to read the shortlist. Settlement requires the consumer application.",
+        "description": "Mandatory coded authority for negotiated prices. Direct discussions are informational. Use negotiate to consult the providers in the coded travel or retail mandate, then offers to read the shortlist. Settlement requires the consumer application.",
         "parameters": {
           "type": "object",
           "additionalProperties": false,
