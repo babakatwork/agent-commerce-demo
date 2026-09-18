@@ -8,6 +8,12 @@ specialists, neither of which has a direct provider connection, create
 policy-bounded mandates before provider research begins. The original agent
 instruction strings are unchanged.
 
+## How the arbiter works
+
+[![Commerce arbiter architecture](docs/assets/commerce-arbiter-overview.png)](docs/assets/commerce-arbiter-overview.pptx)
+
+[Download the editable PowerPoint slide](docs/assets/commerce-arbiter-overview.pptx).
+
 ```bash
 uv sync
 uv run commerce-demo validate
