@@ -32,8 +32,7 @@ Select `industry/consumer_decision_assistant`. Leave **Edited Sly Data** empty a
 send:
 
 ```text
-Find a Santa Cruz vacation for the configured weekend with a maximum budget of
-$1000. Create the mandate, negotiate through the arbiter, and do not settle.
+Book a place in San Diego for the Christmas break. I have $1000 budget.
 ```
 
 Use the graph and logs for this talk track:
@@ -41,15 +40,16 @@ Use the graph and logs for this talk track:
 1. `decision_consultant` delegates to `travel_decision_specialist`.
 2. `TravelMandateAuthority` creates the mandate. Buyer and owner capabilities
    remain in trusted runtime state rather than SlyData.
-3. `destination_researcher` calls Airbnb, Expedia and Booking.com directly. These
+3. The trusted request parser normalizes “Christmas break” to December 24–26;
+   `destination_researcher` then calls Airbnb, Expedia and Booking.com directly. These
    calls return fixed catalogue prices with the mandatory informational caveat.
 4. `travel_cost_analyzer` invokes `CommerceArbiter` with only `operation=negotiate`.
 5. Each provider agent calls its own coded adapter. The adapter commits a sealed
    policy bid and returns `BID_COMMITTED` with a commitment hash, not a price.
 6. After collecting bids, the arbiter applies equal-weight Nash bargaining. It
    registers Booking.com at $955, Expedia at $962.50 and Airbnb at $980.
-7. The agent receives the canonical shortlist. It still lacks `authorize` and
-   `settle` operations.
+7. The agent receives a readable San Diego shortlist. It still lacks `authorize`,
+   `settle`, and every mandate-modification operation.
 
 Open one provider network and point out its `CommerceArbiter` tool. In the logs,
 show that the provider request contains public trip requirements, the mechanism

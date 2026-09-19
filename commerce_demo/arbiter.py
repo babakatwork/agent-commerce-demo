@@ -14,8 +14,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .catalog import (
-    CATALOG, CONNECTED, RETAIL_SCOPE, SCOPE, providers_for, public_catalog,
-    validate_retail_purchase, validate_trip,
+    CATALOG, CONNECTED, RETAIL_SCOPE, providers_for, public_catalog, travel_item,
+    travel_scope, validate_retail_purchase, validate_trip,
 )
 
 MECHANISM_NAME = "weighted_nash_bargaining"
@@ -65,6 +65,10 @@ class Arbiter:
             columns = {row[1] for row in db.execute("PRAGMA table_info(deals)")}
             if "kind" not in columns:
                 db.execute("ALTER TABLE deals ADD COLUMN kind TEXT NOT NULL DEFAULT 'travel'")
+            db.execute("""CREATE TRIGGER IF NOT EXISTS immutable_deal_mandate
+                BEFORE UPDATE OF trip,budget,kind ON deals
+                WHEN NEW.trip IS NOT OLD.trip OR NEW.budget IS NOT OLD.budget OR NEW.kind IS NOT OLD.kind
+                BEGIN SELECT RAISE(ABORT, 'mandates are immutable'); END""")
             bid_columns = {row[1] for row in db.execute("PRAGMA table_info(bids)")}
             if "salt" not in bid_columns:
                 db.execute("ALTER TABLE bids ADD COLUMN salt TEXT NOT NULL DEFAULT ''")
@@ -157,7 +161,8 @@ class Arbiter:
         context = self.context(token, principal)
         subject_key = "trip" if context["kind"] == "travel" else "purchase"
         request = {subject_key: context[subject_key], "route": context["route"],
-                   "scope": SCOPE if context["kind"] == "travel" else RETAIL_SCOPE}
+                   "scope": travel_scope(context[subject_key]) if context["kind"] == "travel"
+                   else RETAIL_SCOPE}
         if context["route"] == "arbiter":
             request.update({
                 "round": context["round"],
@@ -231,12 +236,17 @@ class Arbiter:
                 "message": "Provider has not committed a coded bid."}
 
     def _offer_body(self, deal, provider, amount, commitment, expires):
-        item = CATALOG[provider]
+        subject = json.loads(deal["trip"])
+        item = travel_item(provider, subject) if deal["kind"] == "travel" else CATALOG[provider]
         if deal["kind"] == "travel":
+            from datetime import date
+            nights = (date.fromisoformat(subject["departure"]) -
+                      date.fromisoformat(subject["arrival"])).days
+            stay = f"{nights} night" + ("" if nights == 1 else "s")
             line_items = [
-                {"label": "Two nights, parking and Wi-Fi", "cents": item["lodging_cents"]},
+                {"label": f"{stay} accommodation", "cents": item["lodging_cents"]},
                 {"label": "Taxes and fees", "cents": item["fees_cents"]},
-                {"label": "Local activity for two", "cents": item["activity_cents"]},
+                {"label": "Local activity", "cents": item["activity_cents"]},
             ]
         else:
             line_items = [{"label": item["title"], "cents": item["list_cents"]}]
@@ -246,8 +256,8 @@ class Arbiter:
             "title": item["title"], "round": 1, "currency": "USD",
             "total_cents": amount, "list_cents": item["list_cents"],
             "savings_cents": item["list_cents"] - amount, "line_items": line_items,
-            "trip" if deal["kind"] == "travel" else "purchase": json.loads(deal["trip"]),
-            "scope": SCOPE if deal["kind"] == "travel" else RETAIL_SCOPE,
+            "trip" if deal["kind"] == "travel" else "purchase": subject,
+            "scope": travel_scope(subject) if deal["kind"] == "travel" else RETAIL_SCOPE,
             "cancellation": item["cancellation"], "expires_at": expires,
             "mechanism": {"name": MECHANISM_NAME, "version": MECHANISM_VERSION,
                           "buyer_weight": "1/2", "seller_weight": "1/2",

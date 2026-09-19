@@ -44,21 +44,29 @@ class NetworkIntegrationTests(unittest.TestCase):
             self.assertEqual(receipt["state"], "SETTLED")
             self.assertEqual(receipt["paid_cents"], 95500)
 
-    def test_bare_nsflow_style_call_needs_no_precreated_mandate(self):
+    def test_bare_nsflow_request_drives_mandate_and_returns_a_readable_answer(self):
         with tempfile.TemporaryDirectory() as temp:
             service = Arbiter(Path(temp) / "nsflow.sqlite")
             configure(service)
             setup("replay")
-            result = json.loads(call_network(
+            response = call_network(
                 "consumer_decision_assistant",
-                "Book a Santa Cruz weekend within a $1000 maximum; negotiate but do not settle.",
+                "Book a place in San Diego for the Christmas break. I have $1000 budget.",
                 {},
-            ))
-            self.assertEqual([o["total_cents"] for o in result["offers"]], [95500, 96250, 98000])
+                response_format="natural",
+            )
+            self.assertIn("San Diego", response)
+            self.assertIn("$955.00", response)
+            self.assertIn("nothing has been booked", response.lower())
+            self.assertNotIn('"mechanism"', response)
             with service.db() as db:
-                event = db.execute(
-                    "SELECT payload FROM events WHERE kind='MANDATE_CREATED' ORDER BY seq DESC LIMIT 1"
-                ).fetchone()
+                deal = db.execute("SELECT trip,budget FROM deals ORDER BY created DESC LIMIT 1").fetchone()
+                event = db.execute("SELECT payload FROM events WHERE kind='MANDATE_CREATED' ORDER BY seq DESC LIMIT 1").fetchone()
+            trip = json.loads(deal["trip"])
+            self.assertEqual(trip["destination"], "San Diego")
+            self.assertEqual(trip["arrival"][5:], "12-24")
+            self.assertEqual(trip["departure"][5:], "12-26")
+            self.assertEqual(deal["budget"], 100000)
             self.assertEqual(json.loads(event["payload"])["created_by"], "travel_decision_specialist")
 
     def test_retail_agents_use_arbiter_for_macys_and_carmax(self):
@@ -86,13 +94,15 @@ class NetworkIntegrationTests(unittest.TestCase):
             service = Arbiter(Path(temp) / "retail-nsflow.sqlite")
             configure(service)
             setup("replay")
-            result = json.loads(call_network(
+            response = call_network(
                 "consumer_decision_assistant",
                 "Use Macy's and CarMax to research a retail purchase through the arbiter.",
                 {},
-            ))
-            self.assertEqual([offer["provider"] for offer in result["offers"]], ["macys", "carmax"])
-            self.assertEqual([offer["total_cents"] for offer in result["offers"]], [42000, 2425000])
+                response_format="natural",
+            )
+            self.assertIn("macys", response.lower())
+            self.assertIn("$420.00", response)
+            self.assertIn("$24,250.00", response)
 
 
 if __name__ == "__main__":

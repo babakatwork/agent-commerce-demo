@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -253,6 +254,32 @@ class ArbiterTests(unittest.TestCase):
             result = asyncio.run(TravelMandateAuthority().async_invoke(
                 args, {"commerce_request_id": request_id}))
             self.assertEqual(result["status"], "DENIED")
+
+    def test_arbiter_connected_agents_cannot_modify_an_issued_mandate(self):
+        before = self.service.snapshot(self.owner)
+        buyer_data = {"commerce_capability": self.buyer}
+        for args in (
+            {"operation": "modify_mandate"},
+            {"operation": "negotiate", "budget_cents": 1},
+            {"operation": "offers", "destination": "San Diego"},
+        ):
+            result = asyncio.run(CommerceArbiter().async_invoke(args, buyer_data))
+            self.assertEqual(result["status"], "DENIED")
+        seller = self.service.provider_capability(self.buyer, "airbnb", 1)
+        seller_result = asyncio.run(AirbnbCommerce().async_invoke(
+            {"operation": "modify_mandate"}, {"commerce_capability": seller}))
+        self.assertEqual(seller_result["status"], "DENIED")
+        after = self.service.snapshot(self.owner)
+        self.assertEqual(after["trip"], before["trip"])
+        self.assertEqual(after["budget_cents"], before["budget_cents"])
+
+    def test_database_rejects_mandate_mutation_after_creation(self):
+        with self.assertRaises(sqlite3.IntegrityError):
+            with self.service.db() as db:
+                db.execute("UPDATE deals SET budget=1 WHERE id=?", (self.deal["deal_id"],))
+        snapshot = self.service.snapshot(self.owner)
+        self.assertEqual(snapshot["budget_cents"], 100000)
+        self.assertEqual(snapshot["trip"], default_trip())
 
     def test_retail_specialist_creates_bounded_mandate_without_capability_leak(self):
         purchase = default_retail_purchase()

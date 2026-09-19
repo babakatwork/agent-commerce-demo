@@ -4,7 +4,9 @@ import secrets
 import threading
 from pathlib import Path
 from .arbiter import Arbiter
-from .catalog import default_retail_purchase, default_trip, validate_retail_purchase, validate_trip
+from .catalog import (
+    default_retail_purchase, parse_travel_request, validate_retail_purchase, validate_trip,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 _arbiter = None
@@ -13,6 +15,7 @@ _pending = {}
 _controls = {}
 _requests = {}
 _sessions = {}
+_session_policies = {}
 
 
 def configure(arbiter):
@@ -23,6 +26,7 @@ def configure(arbiter):
         _controls.clear()
         _requests.clear()
         _sessions.clear()
+        _session_policies.clear()
 
 
 def authority():
@@ -53,17 +57,33 @@ def prepare_retail_mandate(purchase, ceiling_cents):
     return request_id
 
 
+def capture_travel_request(sly_data, text):
+    """Bind bare nsFlow user text to trusted structured policy before any agent acts."""
+    if not isinstance(sly_data, dict):
+        raise ValueError("A runtime session is required.")
+    key = id(sly_data)
+    with _lock:
+        existing = _session_policies.get(key)
+    if existing is not None:
+        return {"trip": dict(existing["trip"]), "ceiling_cents": existing["ceiling_cents"]}
+    parsed = parse_travel_request(text)
+    with _lock:
+        _session_policies[key] = {"kind": "travel", **parsed}
+    return {"trip": dict(parsed["trip"]), "ceiling_cents": parsed["ceiling_cents"]}
+
+
 def mandate_policy(sly_data):
-    """Return the trusted policy for this request, or the fixed local nsFlow policy."""
+    """Return host-prepared policy or policy parsed directly from bare nsFlow user text."""
     request_id = sly_data.get("commerce_request_id") if isinstance(sly_data, dict) else None
     with _lock:
         policy = _pending.get(request_id)
+        session_policy = _session_policies.get(id(sly_data)) if isinstance(sly_data, dict) else None
     if policy is not None and policy["kind"] == "travel":
         return {"trip": dict(policy["trip"]), "ceiling_cents": policy["ceiling_cents"]}
-    # Bare nsFlow is an explicitly local simulation. Its policy is fixed by code,
-    # not inferred from model prose, and cannot exceed the configured demo ceiling.
-    ceiling = int(os.environ.get("COMMERCE_AGENT_MANDATE_CEILING_CENTS", "100000"))
-    return {"trip": default_trip(), "ceiling_cents": ceiling}
+    if session_policy is not None and session_policy["kind"] == "travel":
+        return {"trip": dict(session_policy["trip"]),
+                "ceiling_cents": session_policy["ceiling_cents"]}
+    raise ValueError("No trusted travel request is registered for this agent session.")
 
 
 def retail_mandate_policy(sly_data):

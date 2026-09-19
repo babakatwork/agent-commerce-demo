@@ -18,6 +18,10 @@ def validate():
                 if "instructions" in after:
                     assert after["middleware"][0]["class"] == "commerce_demo.middleware.CommerceBoundary"
                 assert "toolbox" not in after, "Uncontrolled web-search egress"
+            for agent in active["tools"]:
+                exposed = set(agent.get("tools", []))
+                if "CommerceArbiter" in exposed:
+                    assert not exposed & {"TravelMandateAuthority", "RetailMandateAuthority"}, agent["name"]
             assert "CommerceArbiter" in by_name
             if network == "consumer_decision_assistant":
                 assert "TravelMandateAuthority" in by_name
@@ -35,6 +39,10 @@ def validate():
                         assert "TravelMandateAuthority" not in agent.get("tools", [])
                     if name != "retail_decision_specialist":
                         assert "RetailMandateAuthority" not in agent.get("tools", [])
+            else:
+                for agent in by_name.values():
+                    assert "TravelMandateAuthority" not in agent.get("tools", [])
+                    assert "RetailMandateAuthority" not in agent.get("tools", [])
         counts[network] = len(original["tools"])
     return {"networks": len(counts), "original_nodes": counts, "original_prompt_changes": 0,
             "original_edges_removed": 0, "modes": ["replay", "live"]}

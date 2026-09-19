@@ -17,16 +17,23 @@ def setup(mode="replay"):
     ProjectEnvironment(ROOT).apply()
 
 
-def call_network(network, text, sly_data=None):
+def call_network(network, text, sly_data=None, response_format="canonical"):
     from neuro_san.client.agent_session_factory import AgentSessionFactory
     session = AgentSessionFactory().create_session("direct", f"industry/{network}", use_direct=True)
     messages = []
     try:
-        request = {"user_message": {"text": text}, "sly_data": sly_data if sly_data is not None else {}}
+        runtime_data = sly_data if sly_data is not None else {}
+        if response_format == "canonical":
+            runtime_data["commerce_response_format"] = "canonical"
+        request = {"user_message": {"text": text}, "sly_data": runtime_data}
         for response in session.streaming_chat(request):
             message = response.get("response", {})
             if message.get("text"):
                 messages.append(message["text"])
+        if response_format == "natural":
+            if not messages:
+                raise RuntimeError(f"Network {network} returned no response.")
+            return messages[-1]
         # Frontman middleware renders a single canonical JSON response.
         for text in reversed(messages):
             try:
@@ -54,7 +61,8 @@ def run_consumer(trip=None, budget_cents=100000):
     trip = trip or default_trip()
     request_id = prepare_mandate(trip, budget_cents)
     message = encode({
-        "request": "Create a bounded mandate, then find Santa Cruz vacation options and use the arbiter to negotiate offers.",
+        "request": (f"Create a bounded mandate, then find {trip['destination']} vacation options "
+                    "and use the arbiter to negotiate offers."),
         "trip": trip,
         "maximum_budget_cents": budget_cents,
     })

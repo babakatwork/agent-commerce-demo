@@ -58,13 +58,13 @@ Macy's and CarMax connections.
 No mandate or SlyData must be created manually. In the Chat tab send:
 
 ```text
-Find a Santa Cruz vacation for the configured weekend with a maximum budget of
-$1000. Create the mandate, negotiate through the arbiter, and do not settle.
+Book a place in San Diego for the Christmas break. I have $1000 budget.
 ```
 
-For deterministic replay, code fixes the trusted trip policy to the next
-Friday–Sunday and the maximum mandate ceiling to $1,000. Watch the graph in this
-order:
+For deterministic replay, code reads the destination and dollar budget directly
+from the bare nsFlow user message before any model acts. Two ISO dates are used
+when supplied; “Christmas” becomes December 24–26, and otherwise the replay uses
+the following Friday–Sunday. Watch the graph in this order:
 
 1. `decision_consultant` delegates to `travel_decision_specialist`.
 2. `travel_decision_specialist` calls `TravelMandateAuthority`. It has no Airbnb,
@@ -75,6 +75,10 @@ order:
 4. `destination_researcher` makes the three fixed-price informational calls.
 5. `travel_cost_analyzer` calls `CommerceArbiter`. Each provider agent invokes its
    coded adapter to commit one sealed bid. The arbiter resolves all bids at once.
+
+The final nsFlow response is a readable summary rather than the arbiter's raw
+JSON. CLI and web-demo calls still request canonical JSON internally. Replay
+inventory and provider price policies remain illustrative rather than live.
 
 Use the **Internal Chat** and **Logs** tabs to follow calls. Select
 `industry/airbnb`, `industry/expedia`, or `industry/booking` from the network tree
@@ -155,6 +159,7 @@ requirements are validated by code. Fixtures are illustrative, not live availabi
 | Boundary | Enforcement |
 | --- | --- |
 | Agent-created mandate | Only the provider-disconnected travel and retail specialists have their respective mandate tools. Code rejects subjects outside the trusted request and amounts above its ceiling. |
+| Mandate immutability | Arbiter-connected buyer and provider agents expose no mandate operation, their tool accepts no trip or budget arguments, and a SQLite trigger rejects changes to an issued mandate's subject, ceiling or domain. A different trip requires a new nsFlow chat/deal. |
 | Private budget | The consumer-side specialist may receive and propose the maximum; the authoritative ceiling is trusted host policy. Middleware removes budget and arbitrary free text from every provider request. |
 | Direct A2A requests | `CommerceBoundary` invokes the destination network with an approved public travel or retail request and a new provider-scoped capability. Model-written free text and parent `sly_data` do not cross this edge. |
 | Direct A2A responses | Provider frontman middleware returns the canonical catalogue response with fixed prices and the mandatory caveat, even if the LLM claims to negotiate or book. |
@@ -258,10 +263,13 @@ cryptographically tamper-evident audit trail.
 
 The consumer UI binds to loopback and requires a session cookie, same-origin
 requests and a CSRF token for changes. Owner credentials stay on the server. A
-bare `ns run` replay uses a fixed local trip policy with a $1,000 maximum ceiling,
-or a fixed retail fixture policy with a $30,000 maximum ceiling. The relevant
-specialist creates the mandate on its first turn. Provider-facing agents still
-fail closed if they run before mandate creation.
+bare `ns run` travel replay derives a bounded policy from the original user
+message in trusted code, not from an LLM tool argument. The parser requires a
+destination introduced by “in” or “to” and a dollar budget; it recognizes two ISO
+dates and the “Christmas” shorthand, otherwise using the following weekend. The
+retail replay retains its fixed $30,000 fixture policy. The relevant specialist
+creates the immutable mandate on its first turn. Provider-facing agents still fail
+closed if they run before mandate creation.
 
 Offers expire after 15 minutes. Hold expiry is processed when state is read or
 confirmation is attempted; there is no background payment processor. Browser
